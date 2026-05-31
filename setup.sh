@@ -1,0 +1,324 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Digitaler Bilderrahmen - Setup-Skript fuer Raspberry Pi 4
+# =============================================================================
+# Ausfuehren mit: sudo bash setup.sh
+# =============================================================================
+
+set -euo pipefail
+
+# ── Farben ──
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# ── Konfiguration ──
+PI_USER="${SUDO_USER:-pi}"
+PI_HOME="/home/${PI_USER}"
+INSTALL_DIR="${PI_HOME}/Digitaler-Bilderrahmen"
+IMAGES_DIR="${INSTALL_DIR}/images"
+INCOMING_DIR="${INSTALL_DIR}/incoming"
+SERVICES_DIR="${INSTALL_DIR}/services"
+SYSTEMD_DIR="/etc/systemd/system"
+
+log()    { echo -e "${GREEN}[OK]${NC}  $*"; }
+warn()   { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error()  { echo -e "${RED}[ERR]${NC}  $*" >&2; }
+header() { echo -e "\n${BOLD}${BLUE}==> $*${NC}"; }
+
+# ── Root-Check ──
+if [[ $EUID -ne 0 ]]; then
+  error "Dieses Skript muss als root ausgefuehrt werden: sudo bash setup.sh"
+  exit 1
+fi
+
+echo -e "${BOLD}"
+echo "╔══════════════════════════════════════════════════╗"
+echo "║     Digitaler Bilderrahmen - Setup               ║"
+echo "║     Raspberry Pi 4                               ║"
+echo "╚══════════════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# ── Quell-Verzeichnis ermitteln ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log "Skript-Verzeichnis: ${SCRIPT_DIR}"
+log "Installations-Verzeichnis: ${INSTALL_DIR}"
+log "Benutzer: ${PI_USER}"
+
+# ── System aktualisieren ──
+header "System-Pakete aktualisieren"
+apt-get update -y
+apt-get upgrade -y
+
+# ── System-Pakete installieren ──
+header "Pakete installieren"
+
+PACKAGES=(
+  python3
+  python3-pip
+  python3-venv
+  python3-pygame
+  python3-flask
+  python3-pil
+  python3-dev
+  libssl-dev
+  libffi-dev
+  build-essential
+  git
+  # Avahi / mDNS (fuer AirDrop)
+  avahi-daemon
+  avahi-utils
+  libavahi-compat-libdnssd-dev
+  # Bluetooth (fuer AirDrop)
+  bluetooth
+  bluez
+  libbluetooth-dev
+  # Netatalk (AFP / AirDrop Unterstuetzung)
+  netatalk
+  # Sonstige Tools
+  feh
+  imagemagick
+  curl
+  unzip
+)
+
+apt-get install -y "${PACKAGES[@]}" || {
+  warn "Einige Pakete konnten nicht installiert werden. Fortfahren..."
+}
+log "System-Pakete installiert."
+
+# ── Python-Pakete installieren ──
+header "Python-Pakete installieren"
+
+pip3 install --break-system-packages --upgrade pip 2>/dev/null || pip3 install --upgrade pip
+
+PYTHON_PACKAGES=(
+  flask
+  werkzeug
+  pillow
+  opendrop
+  requests
+)
+
+for pkg in "${PYTHON_PACKAGES[@]}"; do
+  echo -n "  Installiere ${pkg}... "
+  if pip3 install --break-system-packages "${pkg}" 2>/dev/null || pip3 install "${pkg}"; then
+    echo -e "${GREEN}OK${NC}"
+  else
+    echo -e "${YELLOW}FEHLER (nicht kritisch)${NC}"
+    warn "  ${pkg} konnte nicht installiert werden."
+  fi
+done
+
+log "Python-Pakete installiert."
+
+# ── Verzeichnisse erstellen ──
+header "Verzeichnisse erstellen"
+
+# Installations-Verzeichnis anlegen oder aktualisieren
+if [[ "${SCRIPT_DIR}" != "${INSTALL_DIR}" ]]; then
+  if [[ -d "${INSTALL_DIR}" ]]; then
+    warn "Zielverzeichnis existiert bereits: ${INSTALL_DIR}"
+    read -r -p "Vorhandene Dateien ueberschreiben? [j/N] " answer
+    if [[ "${answer,,}" != "j" ]]; then
+      log "Bestehende Installation wird beibehalten."
+    else
+      cp -r "${SCRIPT_DIR}/." "${INSTALL_DIR}/"
+      log "Dateien kopiert nach: ${INSTALL_DIR}"
+    fi
+  else
+    mkdir -p "${INSTALL_DIR}"
+    cp -r "${SCRIPT_DIR}/." "${INSTALL_DIR}/"
+    log "Projekt kopiert nach: ${INSTALL_DIR}"
+  fi
+else
+  log "Skript laeuft bereits im Zielverzeichnis."
+fi
+
+mkdir -p "${IMAGES_DIR}"
+mkdir -p "${INCOMING_DIR}"
+log "Bilder-Verzeichnisse erstellt."
+
+# Berechtigungen setzen
+chown -R "${PI_USER}:${PI_USER}" "${INSTALL_DIR}"
+chmod -R u+rw "${INSTALL_DIR}"
+chmod +x "${INSTALL_DIR}/slideshow.py" 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/airdrop_receiver.py" 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/web_manager/app.py" 2>/dev/null || true
+
+log "Berechtigungen gesetzt."
+
+# ── Konfiguration anpassen ──
+header "Konfiguration anpassen"
+
+CONFIG_FILE="${INSTALL_DIR}/config.py"
+if [[ -f "${CONFIG_FILE}" ]]; then
+  # BASE_DIR auf den aktuellen Benutzer anpassen
+  sed -i "s|/home/pi/Digitaler-Bilderrahmen|${INSTALL_DIR}|g" "${CONFIG_FILE}"
+  log "config.py angepasst: BASE_DIR = ${INSTALL_DIR}"
+fi
+
+# Service-Dateien anpassen
+for svc_file in "${SERVICES_DIR}"/*.service; do
+  if [[ -f "${svc_file}" ]]; then
+    sed -i "s|/home/pi|${PI_HOME}|g" "${svc_file}"
+    sed -i "s|User=pi|User=${PI_USER}|g" "${svc_file}"
+    sed -i "s|Group=pi|Group=${PI_USER}|g" "${svc_file}"
+    log "Service-Datei angepasst: $(basename "${svc_file}")"
+  fi
+done
+
+# ── Avahi / mDNS konfigurieren ──
+header "Avahi (mDNS) konfigurieren"
+
+AVAHI_CONF="/etc/avahi/avahi-daemon.conf"
+if [[ -f "${AVAHI_CONF}" ]]; then
+  # allow-interfaces = wlan0 (falls nicht schon gesetzt)
+  if ! grep -q "allow-interfaces" "${AVAHI_CONF}"; then
+    sed -i '/\[server\]/a allow-interfaces=wlan0,eth0' "${AVAHI_CONF}"
+  fi
+  log "Avahi konfiguriert."
+fi
+
+systemctl enable avahi-daemon
+systemctl start avahi-daemon || warn "Avahi konnte nicht gestartet werden."
+log "Avahi aktiviert."
+
+# ── Bluetooth aktivieren ──
+header "Bluetooth aktivieren"
+systemctl enable bluetooth 2>/dev/null || warn "Bluetooth-Dienst nicht gefunden."
+systemctl start bluetooth 2>/dev/null || warn "Bluetooth konnte nicht gestartet werden."
+# Benutzer zur bluetooth-Gruppe hinzufuegen
+usermod -aG bluetooth "${PI_USER}" 2>/dev/null || warn "Konnte Benutzer nicht zu bluetooth hinzufuegen."
+log "Bluetooth konfiguriert."
+
+# ── Autostart fuer Desktop (LXDE/openbox) ──
+header "Desktop-Autostart konfigurieren"
+
+AUTOSTART_DIR="${PI_HOME}/.config/autostart"
+mkdir -p "${AUTOSTART_DIR}"
+
+cat > "${AUTOSTART_DIR}/bilderrahmen-slideshow.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Digitaler Bilderrahmen - Diashow
+Comment=Vollbild-Diashow beim Login starten
+Exec=/usr/bin/python3 ${INSTALL_DIR}/slideshow.py
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+EOF
+
+chown "${PI_USER}:${PI_USER}" "${AUTOSTART_DIR}/bilderrahmen-slideshow.desktop"
+log "Desktop-Autostart eingerichtet."
+
+# ── Systemd Services installieren ──
+header "Systemd-Dienste installieren"
+
+SERVICES=(
+  "bilderrahmen-web.service"
+  "bilderrahmen-airdrop.service"
+)
+
+for svc in "${SERVICES[@]}"; do
+  src="${SERVICES_DIR}/${svc}"
+  dst="${SYSTEMD_DIR}/${svc}"
+
+  if [[ -f "${src}" ]]; then
+    cp "${src}" "${dst}"
+    chmod 644 "${dst}"
+    systemctl daemon-reload
+    systemctl enable "${svc}"
+    log "Service installiert und aktiviert: ${svc}"
+  else
+    warn "Service-Datei nicht gefunden: ${src}"
+  fi
+done
+
+# Slideshow-Service nur installieren, nicht als System-Service aktivieren
+# (laeuft besser als Desktop-Autostart, da Display-Zugriff benoetigt wird)
+SLIDESHOW_SVC="bilderrahmen-slideshow.service"
+if [[ -f "${SERVICES_DIR}/${SLIDESHOW_SVC}" ]]; then
+  cp "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
+  chmod 644 "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
+  systemctl daemon-reload
+  # Als User-Service einrichten
+  USER_SYSTEMD="${PI_HOME}/.config/systemd/user"
+  mkdir -p "${USER_SYSTEMD}"
+  cp "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${USER_SYSTEMD}/${SLIDESHOW_SVC}"
+  chown -R "${PI_USER}:${PI_USER}" "${PI_HOME}/.config/systemd"
+  log "Slideshow-Service als User-Service eingerichtet."
+  warn "Slideshow laeuft via Desktop-Autostart (DISPLAY erforderlich)."
+fi
+
+# ── Dienste starten ──
+header "Dienste starten"
+
+systemctl daemon-reload
+
+for svc in "${SERVICES[@]}"; do
+  if systemctl is-enabled "${svc}" &>/dev/null; then
+    systemctl restart "${svc}" || warn "${svc} konnte nicht gestartet werden."
+    log "${svc} gestartet."
+  fi
+done
+
+# ── Firewall (falls ufw aktiv) ──
+if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+  header "Firewall-Regeln"
+  ufw allow 8080/tcp comment "Bilderrahmen Web-Manager" 2>/dev/null || true
+  log "Port 8080 in Firewall freigegeben."
+fi
+
+# ── Beispielbild herunterladen (optional) ──
+header "Beispiel-Bild erstellen"
+SAMPLE_IMAGE="${IMAGES_DIR}/willkommen.jpg"
+if [[ ! -f "${SAMPLE_IMAGE}" ]]; then
+  # Erstelle ein einfaches Platzhalterbild mit ImageMagick
+  if command -v convert &>/dev/null; then
+    convert -size 1920x1080 \
+      gradient:'#1a1a22-#22224e' \
+      -gravity Center \
+      -fill white \
+      -font DejaVu-Sans-Bold \
+      -pointsize 72 \
+      -annotate 0 "Willkommen\nDigitaler Bilderrahmen" \
+      "${SAMPLE_IMAGE}" 2>/dev/null && \
+    chown "${PI_USER}:${PI_USER}" "${SAMPLE_IMAGE}" && \
+    log "Beispielbild erstellt: ${SAMPLE_IMAGE}" || \
+    warn "Konnte Beispielbild nicht erstellen."
+  fi
+fi
+
+# ── Abschluss ──
+echo ""
+echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${GREEN}║     Setup erfolgreich abgeschlossen!             ║${NC}"
+echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${BOLD}Naechste Schritte:${NC}"
+echo ""
+echo -e "  1. ${YELLOW}Raspberry Pi neu starten:${NC}"
+echo -e "     sudo reboot"
+echo ""
+echo -e "  2. ${YELLOW}Web-Interface aufrufen:${NC}"
+echo -e "     http://$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<IP-Adresse>'):8080"
+echo ""
+echo -e "  3. ${YELLOW}AirDrop:${NC}"
+echo -e "     Geraet heisst 'Bilderrahmen' (oder Hostname: $(hostname))"
+echo ""
+echo -e "  4. ${YELLOW}Dienste pruefen:${NC}"
+echo -e "     sudo systemctl status bilderrahmen-web"
+echo -e "     sudo systemctl status bilderrahmen-airdrop"
+echo ""
+echo -e "  5. ${YELLOW}Logs anzeigen:${NC}"
+echo -e "     tail -f ${INSTALL_DIR}/bilderrahmen.log"
+echo ""
+echo -e "  6. ${YELLOW}Bilder manuell hinzufuegen:${NC}"
+echo -e "     Bilder in ${IMAGES_DIR} kopieren"
+echo -e "     Oder in ${INCOMING_DIR} fuer Auto-Import"
+echo ""
+log "Fertig! Bitte Raspberry Pi neu starten."

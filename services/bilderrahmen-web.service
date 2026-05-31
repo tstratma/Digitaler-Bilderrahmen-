@@ -1,0 +1,29 @@
+[Unit]
+Description=Digitaler Bilderrahmen - Web-Manager (Flask)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/Digitaler-Bilderrahmen
+
+Environment=PYTHONUNBUFFERED=1
+Environment=FLASK_ENV=production
+
+ExecStart=/usr/bin/python3 /home/pi/Digitaler-Bilderrahmen/web_manager/app.py
+
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+StandardOutput=append:/home/pi/Digitaler-Bilderrahmen/bilderrahmen.log
+StandardError=append:/home/pi/Digitaler-Bilderrahmen/bilderrahmen.log
+
+Nice=15
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

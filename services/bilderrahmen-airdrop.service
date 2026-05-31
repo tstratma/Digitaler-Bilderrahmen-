@@ -1,0 +1,33 @@
+[Unit]
+Description=Digitaler Bilderrahmen - AirDrop-Empfaenger (opendrop)
+After=network.target avahi-daemon.service
+Wants=network.target avahi-daemon.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/Digitaler-Bilderrahmen
+
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/usr/bin/python3 /home/pi/Digitaler-Bilderrahmen/airdrop_receiver.py
+
+Restart=on-failure
+RestartSec=15
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+StandardOutput=append:/home/pi/Digitaler-Bilderrahmen/bilderrahmen.log
+StandardError=append:/home/pi/Digitaler-Bilderrahmen/bilderrahmen.log
+
+Nice=15
+MemoryMax=256M
+
+# AirDrop braucht Bluetooth und WLAN
+# Sicherstellen dass NetworkManager laeuft
+After=NetworkManager.service
+Wants=bluetooth.target
+
+[Install]
+WantedBy=multi-user.target

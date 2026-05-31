@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>🖼 Digitaler Bilderrahmen</title>
+  <style>
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a22;
+      --surface2: #22222e;
+      --border: #2e2e3e;
+      --accent: #7c6af7;
+      --accent-hover: #6a58e0;
+      --accent-soft: rgba(124,106,247,0.15);
+      --danger: #e05252;
+      --danger-hover: #c43d3d;
+      --success: #4caf82;
+      --text: #e8e8f0;
+      --text-dim: #9090a8;
+      --radius: 14px;
+      --radius-sm: 8px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.5);
+      --transition: 0.2s ease;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 20px env(safe-area-inset-top);
+      text-align: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: var(--text);
+    }
+    header p {
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      margin-top: 3px;
+    }
+
+    /* ── Flash Messages ── */
+    .flash-container {
+      padding: 12px 16px 0;
+    }
+    .flash {
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .flash.success {
+      background: rgba(76,175,130,0.15);
+      border: 1px solid rgba(76,175,130,0.3);
+      color: var(--success);
+    }
+    .flash.error {
+      background: rgba(224,82,82,0.15);
+      border: 1px solid rgba(224,82,82,0.3);
+      color: var(--danger);
+    }
+
+    /* ── Main Layout ── */
+    main {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 16px 16px env(safe-area-inset-bottom);
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+    }
+
+    /* ── Upload ── */
+    .upload-area {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-sm);
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: var(--transition);
+      background: var(--surface2);
+    }
+    .upload-area:hover, .upload-area.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .upload-area .icon {
+      font-size: 2.2rem;
+      margin-bottom: 8px;
+    }
+    .upload-area p {
+      font-size: 0.95rem;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+    .upload-area small {
+      font-size: 0.78rem;
+      color: #666;
+    }
+    #file-input { display: none; }
+    #file-list {
+      margin-top: 12px;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+    }
+    #file-list li {
+      list-style: none;
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 11px 20px;
+      border-radius: var(--radius-sm);
+      border: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition);
+      text-decoration: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      width: 100%;
+      justify-content: center;
+      margin-top: 12px;
+      padding: 13px;
+      font-size: 1rem;
+    }
+    .btn-primary:hover, .btn-primary:active {
+      background: var(--accent-hover);
+    }
+    .btn-sm {
+      padding: 7px 13px;
+      font-size: 0.8rem;
+    }
+    .btn-danger {
+      background: rgba(224,82,82,0.15);
+      color: var(--danger);
+      border: 1px solid rgba(224,82,82,0.25);
+    }
+    .btn-danger:hover, .btn-danger:active {
+      background: var(--danger);
+      color: #fff;
+    }
+    .btn-ghost {
+      background: var(--surface2);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover, .btn-ghost.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    /* ── Interval ── */
+    .interval-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .interval-row input[type="number"] {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      padding: 10px 14px;
+      font-size: 1rem;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .interval-row input[type="number"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .interval-row button {
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .preset-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .preset-row button {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* ── Stats Bar ── */
+    .stats-bar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .stat {
+      flex: 1;
+      min-width: 90px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .stat-label {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      margin-top: 3px;
+    }
+
+    /* ── Image Grid ── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .section-header h2 {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+    }
+    .sort-hint {
+      font-size: 0.75rem;
+      color: #555;
+    }
+
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+    }
+
+    .image-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      position: relative;
+      transition: var(--transition);
+      cursor: grab;
+    }
+    .image-card:active { cursor: grabbing; }
+    .image-card.hidden-img { opacity: 0.4; }
+    .image-card.sortable-ghost {
+      opacity: 0.3;
+      border: 2px dashed var(--accent);
+    }
+    .image-card.sortable-drag {
+      box-shadow: var(--shadow);
+      transform: scale(1.03);
+    }
+
+    .img-thumb {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      display: block;
+      background: #111;
+    }
+
+    .img-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: 6px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+    }
+    .img-number {
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: rgba(255,255,255,0.8);
+      background: rgba(0,0,0,0.4);
+      border-radius: 4px;
+      padding: 2px 5px;
+    }
+
+    .img-info {
+      padding: 8px 8px 6px;
+    }
+    .img-name {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+    .img-meta {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+    }
+
+    .img-actions {
+      display: flex;
+      gap: 5px;
+      padding: 0 8px 8px;
+    }
+    .img-actions form { flex: 1; }
+    .img-actions button {
+      width: 100%;
+      padding: 6px 4px;
+      font-size: 0.72rem;
+      border-radius: 6px;
+    }
+
+    /* ── Empty State ── */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-dim);
+    }
+    .empty-state .icon { font-size: 3rem; margin-bottom: 12px; }
+    .empty-state p { font-size: 0.9rem; }
+
+    /* ── Loading Overlay ── */
+    #upload-progress {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    #upload-progress.visible { display: flex; }
+    .spinner {
+      width: 44px; height: 44px;
+      border: 4px solid rgba(255,255,255,0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Responsiveness ── */
+    @media (max-width: 380px) {
+      .image-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 600px) {
+      .image-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+
+<div id="upload-progress">
+  <div class="spinner"></div>
+  <span>Bilder werden hochgeladen...</span>
+</div>
+
+<header>
+  <h1>🖼 Digitaler Bilderrahmen</h1>
+  <p>Bilder verwalten &amp; Einstellungen</p>
+</header>
+
+<!-- Flash Messages -->
+{% if get_flashed_messages() %}
+<div class="flash-container">
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<main>
+
+  <!-- ── Stats ── -->
+  <div class="card">
+    <div class="card-title">Übersicht</div>
+    <div class="stats-bar">
+      <div class="stat">
+        <div class="stat-value">{{ images | length }}</div>
+        <div class="stat-label">Gesamt</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">{{ images | selectattr('hidden', 'equalto', false) | list | length }}</div>
+        <div class="stat-label">Sichtbar</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">
+          {% set m = interval // 60 %}
+          {% set s = interval % 60 %}
+          {% if m > 0 %}{{ m }}m{% if s %}{{ s }}s{% endif %}{% else %}{{ s }}s{% endif %}
+        </div>
+        <div class="stat-label">Intervall</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Upload ── -->
+  <div class="card">
+    <div class="card-title">Bilder hochladen</div>
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+      <div class="upload-area" id="drop-zone">
+        <div class="icon">📂</div>
+        <p>Tippen oder Bilder hierher ziehen</p>
+        <small>JPG, PNG, GIF, WEBP, BMP &bull; Max. 50 MB</small>
+        <input type="file" id="file-input" name="images" multiple
+               accept=".jpg,.jpeg,.png,.gif,.bmp,.webp,.tiff" />
+      </div>
+      <ul id="file-list"></ul>
+      <button type="submit" class="btn btn-primary" id="upload-btn" disabled>
+        ⬆️ Hochladen
+      </button>
+    </form>
+  </div>
+
+  <!-- ── Intervall ── -->
+  <div class="card">
+    <div class="card-title">Anzeigedauer pro Bild</div>
+    <form action="/set_interval" method="post">
+      <div class="interval-row">
+        <input type="number" name="interval" id="interval-input"
+               value="{{ interval }}" min="5" max="7200" />
+        <button type="submit" class="btn btn-ghost btn-sm">Speichern</button>
+      </div>
+      <div class="preset-row">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(30)">30 Sek.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(60)">1 Min.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(300)">5 Min.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(600)">10 Min.</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ── Bildergalerie ── -->
+  {% if images %}
+  <div>
+    <div class="section-header">
+      <h2>Bilder ({{ images | length }})</h2>
+      <span class="sort-hint">⬆️⬇️ Ziehen zum Sortieren</span>
+    </div>
+    <div class="image-grid" id="sortable-grid">
+      {% for img in images %}
+      <div class="image-card {% if img.hidden %}hidden-img{% endif %}"
+           data-name="{{ img.name }}" id="img-{{ loop.index }}">
+
+        <div class="img-overlay">
+          <span class="img-number">{{ loop.index }}</span>
+        </div>
+
+        <img class="img-thumb"
+             src="/images/{{ img.name }}"
+             alt="{{ img.name }}"
+             loading="lazy" />
+
+        <div class="img-info">
+          <div class="img-name" title="{{ img.name }}">{{ img.name }}</div>
+          <div class="img-meta">{{ img.size_kb }} KB &bull; {{ img.modified }}</div>
+        </div>
+
+        <div class="img-actions">
+          <!-- Einblenden / Ausblenden -->
+          <form action="/toggle_hidden/{{ img.name }}" method="post">
+            <button type="submit" class="btn btn-ghost btn-sm"
+                    title="{% if img.hidden %}Einblenden{% else %}Ausblenden{% endif %}">
+              {% if img.hidden %}👁 Ein{% else %}🚫 Aus{% endif %}
+            </button>
+          </form>
+          <!-- Loeschen -->
+          <form action="/delete/{{ img.name }}" method="post"
+                onsubmit="return confirm('\"{{ img.name }}\" wirklich löschen?')">
+            <button type="submit" class="btn btn-danger btn-sm" title="Loeschen">
+              🗑
+            </button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% else %}
+  <div class="empty-state">
+    <div class="icon">📷</div>
+    <p>Noch keine Bilder vorhanden.<br/>Lade Bilder hoch oder sende sie per AirDrop.</p>
+  </div>
+  {% endif %}
+
+</main>
+
+<!-- SortableJS (CDN, fallback graceful) -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"
+        crossorigin="anonymous"
+        onerror="console.warn('SortableJS nicht geladen – Drag&Drop deaktiviert.')">
+</script>
+
+<script>
+  // ── Preset-Buttons ──
+  function setPreset(s) {
+    document.getElementById('interval-input').value = s;
+    // Highlight
+    document.querySelectorAll('.preset-row .btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+  }
+
+  // ── Upload Drop Zone ──
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const fileList = document.getElementById('file-list');
+  const uploadBtn = document.getElementById('upload-btn');
+  const uploadForm = document.getElementById('upload-form');
+
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    fileInput.files = e.dataTransfer.files;
+    updateFileList(e.dataTransfer.files);
+  });
+
+  fileInput.addEventListener('change', () => updateFileList(fileInput.files));
+
+  function updateFileList(files) {
+    fileList.innerHTML = '';
+    if (files.length === 0) {
+      uploadBtn.disabled = true;
+      return;
+    }
+    uploadBtn.disabled = false;
+    const allowed = ['.jpg','.jpeg','.png','.gif','.bmp','.webp','.tiff'];
+    Array.from(files).forEach(f => {
+      const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
+      const ok = allowed.includes(ext);
+      const li = document.createElement('li');
+      const kb = (f.size / 1024).toFixed(0);
+      li.innerHTML = `${ok ? '✅' : '❌'} ${f.name} <span style="color:#666">(${kb} KB)</span>`;
+      fileList.appendChild(li);
+    });
+  }
+
+  uploadForm.addEventListener('submit', () => {
+    if (!uploadBtn.disabled) {
+      document.getElementById('upload-progress').classList.add('visible');
+    }
+  });
+
+  // ── Sortable Grid ──
+  const grid = document.getElementById('sortable-grid');
+  if (grid && typeof Sortable !== 'undefined') {
+    Sortable.create(grid, {
+      animation: 180,
+      ghostClass: 'sortable-ghost',
+      dragClass: 'sortable-drag',
+      delay: 100,
+      delayOnTouchOnly: true,
+      onEnd: function() {
+        const order = Array.from(grid.querySelectorAll('.image-card'))
+          .map(el => el.getAttribute('data-name'));
+
+        // Nummern aktualisieren
+        grid.querySelectorAll('.img-number').forEach((el, i) => {
+          el.textContent = i + 1;
+        });
+
+        // An Server senden
+        fetch('/reorder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: order })
+        })
+        .then(r => r.json())
+        .then(d => {
+          if (d.status !== 'ok') console.warn('Reihenfolge-Fehler:', d);
+        })
+        .catch(err => console.warn('Reihenfolge konnte nicht gespeichert werden:', err));
+      }
+    });
+  }
+
+  // ── Flash-Messages nach 5 Sekunden ausblenden ──
+  setTimeout(() => {
+    document.querySelectorAll('.flash').forEach(el => {
+      el.style.transition = 'opacity 0.5s';
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 500);
+    });
+  }, 5000);
+</script>
+
+</body>
+</html>

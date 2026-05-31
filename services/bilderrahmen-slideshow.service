@@ -1,0 +1,35 @@
+[Unit]
+Description=Digitaler Bilderrahmen - Diashow (pygame)
+After=network.target graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/Digitaler-Bilderrahmen
+
+# Display-Umgebung fuer den Desktop-Benutzer
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/usr/bin/python3 /home/pi/Digitaler-Bilderrahmen/slideshow.py
+
+# Neustart bei Absturz (aber nicht bei manuellem Stop)
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Logging
+StandardOutput=append:/home/pi/Digitaler-Bilderrahmen/bilderrahmen.log
+StandardError=append:/home/pi/Digitaler-Bilderrahmen/bilderrahmen.log
+
+# Ressourcen-Limits
+Nice=10
+MemoryMax=512M
+
+[Install]
+WantedBy=graphical-session.target
