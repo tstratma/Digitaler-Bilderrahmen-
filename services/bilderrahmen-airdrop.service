@@ -1,7 +1,7 @@
 [Unit]
-Description=Digitaler Bilderrahmen - AirDrop-Empfaenger (opendrop)
-After=network.target avahi-daemon.service
-Wants=network.target avahi-daemon.service
+Description=Digitaler Bilderrahmen - Eingangs-Watcher (incoming/ -> Diashow)
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
@@ -23,11 +23,6 @@ StandardError=append:/home/pi/Digitaler-Bilderrahmen/bilderrahmen.log
 
 Nice=15
 MemoryMax=256M
-
-# AirDrop braucht Bluetooth und WLAN
-# Sicherstellen dass NetworkManager laeuft
-After=NetworkManager.service
-Wants=bluetooth.target
 
 [Install]
 WantedBy=multi-user.target

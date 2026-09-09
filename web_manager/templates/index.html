@@ -452,9 +452,9 @@
       <div class="upload-area" id="drop-zone">
         <div class="icon">📂</div>
         <p>Tippen oder Bilder hierher ziehen</p>
-        <small>JPG, PNG, GIF, WEBP, BMP &bull; Max. 50 MB</small>
+        <small>JPG, PNG, HEIC, GIF, WEBP, BMP &bull; Max. 50 MB</small>
         <input type="file" id="file-input" name="images" multiple
-               accept=".jpg,.jpeg,.png,.gif,.bmp,.webp,.tiff" />
+               accept="image/*,.jpg,.jpeg,.png,.gif,.bmp,.webp,.tiff,.heic,.heif" />
       </div>
       <ul id="file-list"></ul>
       <button type="submit" class="btn btn-primary" id="upload-btn" disabled>
@@ -582,7 +582,7 @@
       return;
     }
     uploadBtn.disabled = false;
-    const allowed = ['.jpg','.jpeg','.png','.gif','.bmp','.webp','.tiff'];
+    const allowed = ['.jpg','.jpeg','.png','.gif','.bmp','.webp','.tiff','.heic','.heif'];
     Array.from(files).forEach(f => {
       const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
       const ok = allowed.includes(ext);

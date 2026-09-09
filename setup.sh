@@ -68,16 +68,15 @@ PACKAGES=(
   libffi-dev
   build-essential
   git
-  # Avahi / mDNS (fuer AirDrop)
+  # HEIC/HEIF (iPhone-Fotos) -> JPEG
+  libheif1
+  libde265-0
+  # Avahi / mDNS (Geraet im Netz per Namen findbar: bilderrahmen.local)
   avahi-daemon
   avahi-utils
-  libavahi-compat-libdnssd-dev
-  # Bluetooth (fuer AirDrop)
-  bluetooth
-  bluez
-  libbluetooth-dev
-  # Netatalk (AFP / AirDrop Unterstuetzung)
-  netatalk
+  # Samba: Ordnerfreigabe fuer die iPhone "Dateien"-App (SMB)
+  samba
+  samba-common-bin
   # Sonstige Tools
   feh
   imagemagick
@@ -99,9 +98,12 @@ PYTHON_PACKAGES=(
   flask
   werkzeug
   pillow
-  opendrop
+  pillow-heif   # HEIC/HEIF-Umwandlung (iPhone-Fotos)
   requests
 )
+# Hinweis: 'opendrop' (echtes AirDrop) wird bewusst NICHT automatisch
+# installiert. Es benoetigt zusaetzlich den 'owl'-Daemon + passende WLAN-
+# Hardware und ist fuer den Alltag nicht praktikabel. Siehe README.md.
 
 for pkg in "${PYTHON_PACKAGES[@]}"; do
   echo -n "  Installiere ${pkg}... "
@@ -187,13 +189,35 @@ systemctl enable avahi-daemon
 systemctl start avahi-daemon || warn "Avahi konnte nicht gestartet werden."
 log "Avahi aktiviert."
 
-# ── Bluetooth aktivieren ──
-header "Bluetooth aktivieren"
-systemctl enable bluetooth 2>/dev/null || warn "Bluetooth-Dienst nicht gefunden."
-systemctl start bluetooth 2>/dev/null || warn "Bluetooth konnte nicht gestartet werden."
-# Benutzer zur bluetooth-Gruppe hinzufuegen
-usermod -aG bluetooth "${PI_USER}" 2>/dev/null || warn "Konnte Benutzer nicht zu bluetooth hinzufuegen."
-log "Bluetooth konfiguriert."
+# ── Samba-Freigabe (iPhone "Dateien"-App) ──
+header "Samba-Freigabe fuer den 'incoming'-Ordner einrichten"
+
+SMB_CONF="/etc/samba/smb.conf"
+if [[ -f "${SMB_CONF}" ]] && ! grep -q "\[Bilderrahmen\]" "${SMB_CONF}"; then
+  cat >> "${SMB_CONF}" <<EOF
+
+[Bilderrahmen]
+   comment = Digitaler Bilderrahmen - Bilder hierher kopieren
+   path = ${INCOMING_DIR}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   create mask = 0664
+   directory mask = 0775
+   force user = ${PI_USER}
+EOF
+  log "Samba-Freigabe 'Bilderrahmen' hinzugefuegt (Ziel: ${INCOMING_DIR})."
+else
+  warn "Samba-Freigabe schon vorhanden oder smb.conf fehlt - uebersprungen."
+fi
+
+# 'incoming' fuer Gast-Schreibzugriff vorbereiten
+mkdir -p "${INCOMING_DIR}"
+chmod 0775 "${INCOMING_DIR}" 2>/dev/null || true
+
+systemctl enable smbd 2>/dev/null || warn "smbd-Dienst nicht gefunden."
+systemctl restart smbd 2>/dev/null || warn "smbd konnte nicht gestartet werden."
+log "Samba konfiguriert. iPhone: Dateien-App -> Verbinden -> smb://$(hostname).local"
 
 # ── Autostart fuer Desktop (LXDE/openbox) ──
 header "Desktop-Autostart konfigurieren"
@@ -307,8 +331,12 @@ echo ""
 echo -e "  2. ${YELLOW}Web-Interface aufrufen:${NC}"
 echo -e "     http://$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<IP-Adresse>'):8080"
 echo ""
-echo -e "  3. ${YELLOW}AirDrop:${NC}"
-echo -e "     Geraet heisst 'Bilderrahmen' (oder Hostname: $(hostname))"
+echo -e "  3. ${YELLOW}Bilder vom iPhone senden (2 Wege):${NC}"
+echo -e "     a) Web: http://$(hostname).local:8080  (Fotos-App -> Hochladen)"
+echo -e "        Tipp: Safari -> Teilen -> 'Zum Home-Bildschirm'"
+echo -e "     b) Dateien-App -> Verbinden mit Server -> smb://$(hostname).local"
+echo -e "        -> Ordner 'Bilderrahmen' -> Fotos hineinkopieren"
+echo -e "     Hinweis: Echtes AirDrop wird NICHT unterstuetzt (siehe README.md)."
 echo ""
 echo -e "  4. ${YELLOW}Dienste pruefen:${NC}"
 echo -e "     sudo systemctl status bilderrahmen-web"

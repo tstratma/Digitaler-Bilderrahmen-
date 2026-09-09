@@ -31,8 +31,13 @@ WEB_SECRET_KEY = "bilderrahmen-secret-2024"
 # AirDrop
 AIRDROP_SAVE_DIR = IMAGES_DIR
 
-# Erlaubte Bildformate
+# Bildformate, die die Diashow (pygame) direkt anzeigen kann.
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff"}
+
+# Formate, die beim Upload/Empfang zusaetzlich akzeptiert werden.
+# iPhone-Fotos sind standardmaessig HEIC/HEIF und werden nach dem
+# Empfang automatisch in JPEG umgewandelt (siehe image_utils.py).
+UPLOAD_EXTENSIONS = ALLOWED_EXTENSIONS | {".heic", ".heif"}
 
 # Maximale Upload-Groesse (in Bytes): 50 MB
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
@@ -47,7 +52,7 @@ LOG_FILE = os.path.join(BASE_DIR, "bilderrahmen.log")
 DISPLAY_WIDTH = 1920
 DISPLAY_HEIGHT = 1080
 FULLSCREEN = True
-SHOW_FILENAME = True
+SHOW_FILENAME = False  # Dateiname im Bild einblenden (fuer Bilderrahmen meist unerwuenscht)
 FILENAME_DISPLAY_DURATION = 3  # Sekunden
 
 

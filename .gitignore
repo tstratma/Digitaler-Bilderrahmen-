@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Laufzeit-/Datendateien des Bilderrahmens
+images/
+incoming/
+*.log
+.interval
+.reload_signal
+hidden_images.json
+image_order.json

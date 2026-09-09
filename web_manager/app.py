@@ -28,6 +28,7 @@ from werkzeug.utils import secure_filename
 # Pfad fuer lokale Imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+import image_utils
 
 # Logging
 logging.basicConfig(
@@ -154,8 +155,8 @@ def signal_reload():
 
 
 def allowed_file(filename: str) -> bool:
-    """Prueft ob die Dateiendung erlaubt ist."""
-    return Path(filename).suffix.lower() in config.ALLOWED_EXTENSIONS
+    """Prueft ob die Dateiendung fuer den Upload erlaubt ist (inkl. HEIC)."""
+    return Path(filename).suffix.lower() in config.UPLOAD_EXTENSIONS
 
 
 # ─── Routen ─────────────────────────────────────────────────────────────────
@@ -207,6 +208,23 @@ def upload():
 
         try:
             file.save(str(dest))
+            # iPhone-HEIC/HEIF direkt in JPEG umwandeln (fuer die Diashow)
+            if image_utils.is_heic(dest):
+                converted = image_utils.normalize_image(dest)
+                if converted is None:
+                    logger.warning("HEIC konnte nicht umgewandelt werden: %s", filename)
+                    try:
+                        dest.unlink()  # nicht anzeigbare HEIC-Datei nicht liegen lassen
+                    except OSError:
+                        pass
+                    flash(
+                        f"'{filename}' ist HEIC und konnte nicht umgewandelt werden. "
+                        "Bitte pillow-heif installieren oder JPEG hochladen.",
+                        "error",
+                    )
+                    errors += 1
+                    continue
+                filename = Path(converted).name
             logger.info("Bild hochgeladen: %s", filename)
             uploaded += 1
         except Exception as e:
