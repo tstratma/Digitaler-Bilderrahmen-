@@ -166,10 +166,12 @@ def index():
     """Hauptseite mit Bildergalerie."""
     images = get_images()
     current_interval = config.get_interval()
+    settings = config.get_settings()
     return render_template(
         "index.html",
         images=images,
         interval=current_interval,
+        settings=settings,
         images_dir=config.IMAGES_DIR,
     )
 
@@ -297,11 +299,28 @@ def toggle_hidden(filename):
     return redirect(url_for("index"))
 
 
+@app.route("/set_settings", methods=["POST"])
+def set_settings():
+    """Wiedergabe-Einstellungen (Zufall, Ueberblendung) speichern."""
+    # Checkboxen: vorhanden = an, fehlend = aus
+    config.set_setting("shuffle", request.form.get("shuffle") == "on")
+    config.set_setting("transition", request.form.get("transition") == "on")
+    signal_reload()
+    flash("Einstellungen gespeichert.", "success")
+    return redirect(url_for("index"))
+
+
 @app.route("/set_interval", methods=["POST"])
 def set_interval():
-    """Diashow-Intervall setzen."""
+    """Diashow-Intervall setzen. Akzeptiert Minuten + Sekunden oder Sekunden."""
     try:
-        seconds = int(request.form.get("interval", 300))
+        # Bevorzugt Minuten/Sekunden-Felder, sonst das reine Sekundenfeld
+        if request.form.get("minutes") is not None or request.form.get("seconds") is not None:
+            minutes = int(request.form.get("minutes") or 0)
+            secs = int(request.form.get("seconds") or 0)
+            seconds = minutes * 60 + secs
+        else:
+            seconds = int(request.form.get("interval", 300))
         if not (5 <= seconds <= 7200):
             flash("Intervall muss zwischen 5 und 7200 Sekunden liegen.", "error")
             return redirect(url_for("index"))

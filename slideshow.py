@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import json
+import random
 import logging
 import pygame
 import threading
@@ -30,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("slideshow")
 
 
-def load_image_list():
+def load_image_list(shuffle=False):
     """Laedt und sortiert die Liste der anzuzeigenden Bilder."""
     images_dir = Path(config.IMAGES_DIR)
     if not images_dir.exists():
@@ -90,6 +91,9 @@ def load_image_list():
     )
     result.extend(remaining)
 
+    if shuffle:
+        random.shuffle(result)
+
     return result
 
 
@@ -142,6 +146,9 @@ class Slideshow:
         self.current_index = 0
         self.current_surface = None
         self.interval = config.get_interval()
+        settings = config.get_settings()
+        self.shuffle = bool(settings.get("shuffle", config.DEFAULT_SHUFFLE))
+        self.transition = bool(settings.get("transition", config.DEFAULT_TRANSITION))
         self.running = True
         self.reload_requested = False
         self._last_signal_check = 0
@@ -176,6 +183,23 @@ class Slideshow:
                     logger.info("Neues Intervall: %d Sekunden", new_interval)
             except Exception:
                 pass
+
+    def check_settings_change(self):
+        """Prueft ob Einstellungen (Zufall, Ueberblendung) geaendert wurden."""
+        try:
+            settings = config.get_settings()
+            new_shuffle = bool(settings.get("shuffle", config.DEFAULT_SHUFFLE))
+            new_transition = bool(settings.get("transition", config.DEFAULT_TRANSITION))
+            if new_transition != self.transition:
+                self.transition = new_transition
+                logger.info("Ueberblendung: %s", "an" if new_transition else "aus")
+            if new_shuffle != self.shuffle:
+                self.shuffle = new_shuffle
+                logger.info("Zufaellige Reihenfolge: %s", "an" if new_shuffle else "aus")
+                # Bilderliste neu aufbauen (mit/ohne Zufall)
+                self.reload_requested = True
+        except Exception:
+            pass
 
     def load_pygame_image(self, path):
         """Laedt ein Bild und skaliert es auf den Bildschirm."""
@@ -238,7 +262,7 @@ class Slideshow:
     def run(self):
         """Haupt-Loop der Diashow."""
         clock = pygame.time.Clock()
-        self.images = load_image_list()
+        self.images = load_image_list(self.shuffle)
 
         if not self.images:
             self._show_no_images_screen()
@@ -269,11 +293,12 @@ class Slideshow:
                 self._last_signal_check = current_time
                 self.check_reload_signal()
                 self.check_interval_change()
+                self.check_settings_change()
 
             # Reload verarbeiten
             if self.reload_requested:
                 self.reload_requested = False
-                new_images = load_image_list()
+                new_images = load_image_list(self.shuffle)
                 self.images = new_images
                 if not self.images:
                     self._show_no_images_screen()
@@ -303,7 +328,7 @@ class Slideshow:
             self.current_index = next_index
             return
 
-        if self.current_surface is not None:
+        if self.current_surface is not None and self.transition:
             self.crossfade(self.current_surface, next_surf, config.TRANSITION_DURATION)
         else:
             x = (self.screen_width - next_surf.get_width()) // 2

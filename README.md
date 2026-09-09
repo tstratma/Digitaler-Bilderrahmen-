@@ -87,9 +87,19 @@ Nach dem Neustart:
 
 ---
 
-## ⚙️ Konfiguration (`config.py`)
+## ⚙️ Einstellungen im Web-Interface
 
-- `DEFAULT_INTERVAL = 300` → 5 Minuten (auch live im Web-Interface änderbar)
+Direkt vom iPhone im Web-Interface (`http://bilderrahmen.local:8080`) einstellbar –
+Änderungen wirken **live**, ohne Neustart:
+
+- **Wie oft das Bild wechselt** – in Minuten + Sekunden, plus Schnellwahl
+  (30 Sek. / 1 / 5 / 10 / 30 Min.)
+- **Zufällige Reihenfolge** an/aus
+- **Weiche Überblendung** an/aus
+
+### Weitere Werte in `config.py`
+
+- `DEFAULT_INTERVAL = 300` → Start-Intervall (5 Min)
 - `SHOW_FILENAME = False` → Dateiname nicht einblenden (typisch für Rahmen)
 - `TRANSITION_DURATION` → Dauer der Überblendung
 - `WEB_PORT = 8080` → Port des Web-Interfaces

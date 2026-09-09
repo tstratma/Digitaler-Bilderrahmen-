@@ -221,6 +221,56 @@
       white-space: nowrap;
       flex-shrink: 0;
     }
+    .interval-row .unit {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    .interval-row input[type="number"] {
+      max-width: 80px;
+    }
+
+    /* ── Toggle-Zeilen ── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    .toggle-row:last-of-type { border-bottom: none; }
+    .toggle-row input[type="checkbox"] {
+      width: 46px;
+      height: 26px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      position: relative;
+      cursor: pointer;
+      transition: var(--transition);
+      flex-shrink: 0;
+    }
+    .toggle-row input[type="checkbox"]::after {
+      content: "";
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: var(--transition);
+    }
+    .toggle-row input[type="checkbox"]:checked {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .toggle-row input[type="checkbox"]:checked::after {
+      left: 22px;
+      background: #fff;
+    }
     .preset-row {
       display: flex;
       gap: 8px;
@@ -465,19 +515,40 @@
 
   <!-- ── Intervall ── -->
   <div class="card">
-    <div class="card-title">Anzeigedauer pro Bild</div>
+    <div class="card-title">Wie oft soll das Bild wechseln?</div>
     <form action="/set_interval" method="post">
       <div class="interval-row">
-        <input type="number" name="interval" id="interval-input"
-               value="{{ interval }}" min="5" max="7200" />
+        <input type="number" name="minutes" id="min-input"
+               value="{{ interval // 60 }}" min="0" max="120" aria-label="Minuten" />
+        <span class="unit">Min.</span>
+        <input type="number" name="seconds" id="sec-input"
+               value="{{ interval % 60 }}" min="0" max="59" aria-label="Sekunden" />
+        <span class="unit">Sek.</span>
         <button type="submit" class="btn btn-ghost btn-sm">Speichern</button>
       </div>
       <div class="preset-row">
-        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(30)">30 Sek.</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(60)">1 Min.</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(300)">5 Min.</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(600)">10 Min.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(0,30)">30 Sek.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(1,0)">1 Min.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(5,0)">5 Min.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(10,0)">10 Min.</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="setPreset(30,0)">30 Min.</button>
       </div>
+    </form>
+  </div>
+
+  <!-- ── Wiedergabe-Einstellungen ── -->
+  <div class="card">
+    <div class="card-title">Wiedergabe</div>
+    <form action="/set_settings" method="post">
+      <label class="toggle-row">
+        <span>🔀 Zufällige Reihenfolge</span>
+        <input type="checkbox" name="shuffle" {% if settings.shuffle %}checked{% endif %} />
+      </label>
+      <label class="toggle-row">
+        <span>🌫 Weiche Überblendung</span>
+        <input type="checkbox" name="transition" {% if settings.transition %}checked{% endif %} />
+      </label>
+      <button type="submit" class="btn btn-primary" style="margin-top:14px">💾 Einstellungen speichern</button>
     </form>
   </div>
 
@@ -544,9 +615,10 @@
 </script>
 
 <script>
-  // ── Preset-Buttons ──
-  function setPreset(s) {
-    document.getElementById('interval-input').value = s;
+  // ── Preset-Buttons (Minuten, Sekunden) ──
+  function setPreset(m, s) {
+    document.getElementById('min-input').value = m;
+    document.getElementById('sec-input').value = s;
     // Highlight
     document.querySelectorAll('.preset-row .btn').forEach(b => b.classList.remove('active'));
     event.target.classList.add('active');
