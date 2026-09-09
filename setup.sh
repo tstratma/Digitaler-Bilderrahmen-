@@ -89,33 +89,45 @@ apt-get install -y "${PACKAGES[@]}" || {
 }
 log "System-Pakete installiert."
 
-# ── Python-Pakete installieren ──
-header "Python-Pakete installieren"
+# ── Python-Pakete ──
+header "Python-Abhaengigkeiten pruefen"
 
-pip3 install --break-system-packages --upgrade pip 2>/dev/null || pip3 install --upgrade pip
+# Auf Raspberry Pi OS Bookworm ist die System-Python-Umgebung
+# "externally managed" -> 'pip install' schlaegt fehl. Deshalb kommt das
+# Meiste ueber apt (oben: python3-flask, python3-pygame, python3-pil).
+# Kein pip-Upgrade noetig.
+#
+# Nur pillow-heif (HEIC/HEIF von iPhone-Fotos) ist ggf. nicht als apt-Paket
+# vorhanden und wird robust nachinstalliert.
 
-PYTHON_PACKAGES=(
-  flask
-  werkzeug
-  pillow
-  pillow-heif   # HEIC/HEIF-Umwandlung (iPhone-Fotos)
-  requests
-)
-# Hinweis: 'opendrop' (echtes AirDrop) wird bewusst NICHT automatisch
-# installiert. Es benoetigt zusaetzlich den 'owl'-Daemon + passende WLAN-
-# Hardware und ist fuer den Alltag nicht praktikabel. Siehe README.md.
+HEIF_OK=0
 
-for pkg in "${PYTHON_PACKAGES[@]}"; do
-  echo -n "  Installiere ${pkg}... "
-  if pip3 install --break-system-packages "${pkg}" 2>/dev/null || pip3 install "${pkg}"; then
-    echo -e "${GREEN}OK${NC}"
-  else
-    echo -e "${YELLOW}FEHLER (nicht kritisch)${NC}"
-    warn "  ${pkg} konnte nicht installiert werden."
+# 1) Bevorzugt via apt (falls paketiert)
+if apt-get install -y python3-pillow-heif >/dev/null 2>&1; then
+  HEIF_OK=1
+  log "pillow-heif via apt installiert (HEIC-Unterstuetzung aktiv)."
+fi
+
+# 2) Sonst via pip mit --break-system-packages (Bookworm-konform)
+if [[ "${HEIF_OK}" -ne 1 ]]; then
+  if pip3 install --break-system-packages pillow-heif >/dev/null 2>&1; then
+    HEIF_OK=1
+    log "pillow-heif via pip installiert (HEIC-Unterstuetzung aktiv)."
   fi
-done
+fi
 
-log "Python-Pakete installiert."
+if [[ "${HEIF_OK}" -ne 1 ]]; then
+  warn "pillow-heif konnte nicht installiert werden."
+  warn "  -> iPhone-HEIC-Fotos werden dann nicht automatisch umgewandelt."
+  warn "  -> Alternative am iPhone: Einstellungen -> Kamera -> Formate"
+  warn "     -> 'Maximale Kompatibilitaet' (nimmt Fotos direkt als JPEG auf)."
+fi
+
+# Hinweis: 'opendrop' (echtes AirDrop) wird bewusst NICHT installiert.
+# Es benoetigt den 'owl'-Daemon + passende WLAN-Hardware und ist fuer den
+# Alltag nicht praktikabel. Siehe README.md.
+
+log "Python-Abhaengigkeiten bereit (Flask/pygame/Pillow via apt)."
 
 # ── Verzeichnisse erstellen ──
 header "Verzeichnisse erstellen"
