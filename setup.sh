@@ -68,16 +68,15 @@ PACKAGES=(
   libffi-dev
   build-essential
   git
-  # Avahi / mDNS (fuer AirDrop)
+  # HEIC/HEIF (iPhone-Fotos) -> JPEG
+  libheif1
+  libde265-0
+  # Avahi / mDNS (Geraet im Netz per Namen findbar: bilderrahmen.local)
   avahi-daemon
   avahi-utils
-  libavahi-compat-libdnssd-dev
-  # Bluetooth (fuer AirDrop)
-  bluetooth
-  bluez
-  libbluetooth-dev
-  # Netatalk (AFP / AirDrop Unterstuetzung)
-  netatalk
+  # Samba: Ordnerfreigabe fuer die iPhone "Dateien"-App (SMB)
+  samba
+  samba-common-bin
   # Sonstige Tools
   feh
   imagemagick
@@ -90,30 +89,45 @@ apt-get install -y "${PACKAGES[@]}" || {
 }
 log "System-Pakete installiert."
 
-# ── Python-Pakete installieren ──
-header "Python-Pakete installieren"
+# ── Python-Pakete ──
+header "Python-Abhaengigkeiten pruefen"
 
-pip3 install --break-system-packages --upgrade pip 2>/dev/null || pip3 install --upgrade pip
+# Auf Raspberry Pi OS Bookworm ist die System-Python-Umgebung
+# "externally managed" -> 'pip install' schlaegt fehl. Deshalb kommt das
+# Meiste ueber apt (oben: python3-flask, python3-pygame, python3-pil).
+# Kein pip-Upgrade noetig.
+#
+# Nur pillow-heif (HEIC/HEIF von iPhone-Fotos) ist ggf. nicht als apt-Paket
+# vorhanden und wird robust nachinstalliert.
 
-PYTHON_PACKAGES=(
-  flask
-  werkzeug
-  pillow
-  opendrop
-  requests
-)
+HEIF_OK=0
 
-for pkg in "${PYTHON_PACKAGES[@]}"; do
-  echo -n "  Installiere ${pkg}... "
-  if pip3 install --break-system-packages "${pkg}" 2>/dev/null || pip3 install "${pkg}"; then
-    echo -e "${GREEN}OK${NC}"
-  else
-    echo -e "${YELLOW}FEHLER (nicht kritisch)${NC}"
-    warn "  ${pkg} konnte nicht installiert werden."
+# 1) Bevorzugt via apt (falls paketiert)
+if apt-get install -y python3-pillow-heif >/dev/null 2>&1; then
+  HEIF_OK=1
+  log "pillow-heif via apt installiert (HEIC-Unterstuetzung aktiv)."
+fi
+
+# 2) Sonst via pip mit --break-system-packages (Bookworm-konform)
+if [[ "${HEIF_OK}" -ne 1 ]]; then
+  if pip3 install --break-system-packages pillow-heif >/dev/null 2>&1; then
+    HEIF_OK=1
+    log "pillow-heif via pip installiert (HEIC-Unterstuetzung aktiv)."
   fi
-done
+fi
 
-log "Python-Pakete installiert."
+if [[ "${HEIF_OK}" -ne 1 ]]; then
+  warn "pillow-heif konnte nicht installiert werden."
+  warn "  -> iPhone-HEIC-Fotos werden dann nicht automatisch umgewandelt."
+  warn "  -> Alternative am iPhone: Einstellungen -> Kamera -> Formate"
+  warn "     -> 'Maximale Kompatibilitaet' (nimmt Fotos direkt als JPEG auf)."
+fi
+
+# Hinweis: 'opendrop' (echtes AirDrop) wird bewusst NICHT installiert.
+# Es benoetigt den 'owl'-Daemon + passende WLAN-Hardware und ist fuer den
+# Alltag nicht praktikabel. Siehe README.md.
+
+log "Python-Abhaengigkeiten bereit (Flask/pygame/Pillow via apt)."
 
 # ── Verzeichnisse erstellen ──
 header "Verzeichnisse erstellen"
@@ -141,6 +155,9 @@ fi
 mkdir -p "${IMAGES_DIR}"
 mkdir -p "${INCOMING_DIR}"
 log "Bilder-Verzeichnisse erstellt."
+
+# Log-Datei vorab anlegen (damit sie dem Benutzer gehoert, nicht root)
+touch "${INSTALL_DIR}/bilderrahmen.log" 2>/dev/null || true
 
 # Berechtigungen setzen
 chown -R "${PI_USER}:${PI_USER}" "${INSTALL_DIR}"
@@ -187,13 +204,35 @@ systemctl enable avahi-daemon
 systemctl start avahi-daemon || warn "Avahi konnte nicht gestartet werden."
 log "Avahi aktiviert."
 
-# ── Bluetooth aktivieren ──
-header "Bluetooth aktivieren"
-systemctl enable bluetooth 2>/dev/null || warn "Bluetooth-Dienst nicht gefunden."
-systemctl start bluetooth 2>/dev/null || warn "Bluetooth konnte nicht gestartet werden."
-# Benutzer zur bluetooth-Gruppe hinzufuegen
-usermod -aG bluetooth "${PI_USER}" 2>/dev/null || warn "Konnte Benutzer nicht zu bluetooth hinzufuegen."
-log "Bluetooth konfiguriert."
+# ── Samba-Freigabe (iPhone "Dateien"-App) ──
+header "Samba-Freigabe fuer den 'incoming'-Ordner einrichten"
+
+SMB_CONF="/etc/samba/smb.conf"
+if [[ -f "${SMB_CONF}" ]] && ! grep -q "\[Bilderrahmen\]" "${SMB_CONF}"; then
+  cat >> "${SMB_CONF}" <<EOF
+
+[Bilderrahmen]
+   comment = Digitaler Bilderrahmen - Bilder hierher kopieren
+   path = ${INCOMING_DIR}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   create mask = 0664
+   directory mask = 0775
+   force user = ${PI_USER}
+EOF
+  log "Samba-Freigabe 'Bilderrahmen' hinzugefuegt (Ziel: ${INCOMING_DIR})."
+else
+  warn "Samba-Freigabe schon vorhanden oder smb.conf fehlt - uebersprungen."
+fi
+
+# 'incoming' fuer Gast-Schreibzugriff vorbereiten
+mkdir -p "${INCOMING_DIR}"
+chmod 0775 "${INCOMING_DIR}" 2>/dev/null || true
+
+systemctl enable smbd 2>/dev/null || warn "smbd-Dienst nicht gefunden."
+systemctl restart smbd 2>/dev/null || warn "smbd konnte nicht gestartet werden."
+log "Samba konfiguriert. iPhone: Dateien-App -> Verbinden -> smb://$(hostname).local"
 
 # ── Autostart fuer Desktop (LXDE/openbox) ──
 header "Desktop-Autostart konfigurieren"
@@ -307,8 +346,12 @@ echo ""
 echo -e "  2. ${YELLOW}Web-Interface aufrufen:${NC}"
 echo -e "     http://$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<IP-Adresse>'):8080"
 echo ""
-echo -e "  3. ${YELLOW}AirDrop:${NC}"
-echo -e "     Geraet heisst 'Bilderrahmen' (oder Hostname: $(hostname))"
+echo -e "  3. ${YELLOW}Bilder vom iPhone senden (2 Wege):${NC}"
+echo -e "     a) Web: http://$(hostname).local:8080  (Fotos-App -> Hochladen)"
+echo -e "        Tipp: Safari -> Teilen -> 'Zum Home-Bildschirm'"
+echo -e "     b) Dateien-App -> Verbinden mit Server -> smb://$(hostname).local"
+echo -e "        -> Ordner 'Bilderrahmen' -> Fotos hineinkopieren"
+echo -e "     Hinweis: Echtes AirDrop wird NICHT unterstuetzt (siehe README.md)."
 echo ""
 echo -e "  4. ${YELLOW}Dienste pruefen:${NC}"
 echo -e "     sudo systemctl status bilderrahmen-web"

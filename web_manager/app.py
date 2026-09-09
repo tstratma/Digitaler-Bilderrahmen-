@@ -5,6 +5,7 @@ Flask-App fuer die Verwaltung der Bilder vom iPhone aus.
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -28,15 +29,13 @@ from werkzeug.utils import secure_filename
 # Pfad fuer lokale Imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+import image_utils
 
 # Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [web] %(levelname)s: %(message)s",
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler(sys.stdout),
-    ]
+    handlers=config.build_log_handlers("web"),
 )
 logger = logging.getLogger("web")
 
@@ -154,8 +153,8 @@ def signal_reload():
 
 
 def allowed_file(filename: str) -> bool:
-    """Prueft ob die Dateiendung erlaubt ist."""
-    return Path(filename).suffix.lower() in config.ALLOWED_EXTENSIONS
+    """Prueft ob die Dateiendung fuer den Upload erlaubt ist (inkl. HEIC)."""
+    return Path(filename).suffix.lower() in config.UPLOAD_EXTENSIONS
 
 
 # ─── Routen ─────────────────────────────────────────────────────────────────
@@ -165,10 +164,12 @@ def index():
     """Hauptseite mit Bildergalerie."""
     images = get_images()
     current_interval = config.get_interval()
+    settings = config.get_settings()
     return render_template(
         "index.html",
         images=images,
         interval=current_interval,
+        settings=settings,
         images_dir=config.IMAGES_DIR,
     )
 
@@ -207,6 +208,23 @@ def upload():
 
         try:
             file.save(str(dest))
+            # iPhone-HEIC/HEIF direkt in JPEG umwandeln (fuer die Diashow)
+            if image_utils.is_heic(dest):
+                converted = image_utils.normalize_image(dest)
+                if converted is None:
+                    logger.warning("HEIC konnte nicht umgewandelt werden: %s", filename)
+                    try:
+                        dest.unlink()  # nicht anzeigbare HEIC-Datei nicht liegen lassen
+                    except OSError:
+                        pass
+                    flash(
+                        f"'{filename}' ist HEIC und konnte nicht umgewandelt werden. "
+                        "Bitte pillow-heif installieren oder JPEG hochladen.",
+                        "error",
+                    )
+                    errors += 1
+                    continue
+                filename = Path(converted).name
             logger.info("Bild hochgeladen: %s", filename)
             uploaded += 1
         except Exception as e:
@@ -279,11 +297,43 @@ def toggle_hidden(filename):
     return redirect(url_for("index"))
 
 
+@app.route("/set_settings", methods=["POST"])
+def set_settings():
+    """Wiedergabe-Einstellungen (Zufall, Ueberblendung) speichern."""
+    # Checkboxen: vorhanden = an, fehlend = aus
+    config.set_setting("shuffle", request.form.get("shuffle") == "on")
+    config.set_setting("transition", request.form.get("transition") == "on")
+    signal_reload()
+    flash("Einstellungen gespeichert.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/set_sleep", methods=["POST"])
+def set_sleep():
+    """Nachtruhe speichern: Display nachts aus (Strom sparen)."""
+    config.set_setting("sleep_enabled", request.form.get("sleep_enabled") == "on")
+    for key in ("sleep_start", "sleep_end"):
+        val = (request.form.get(key) or "").strip()
+        if re.match(r"^\d{1,2}:\d{2}$", val):
+            h, m = (int(x) for x in val.split(":"))
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                config.set_setting(key, f"{h:02d}:{m:02d}")
+    signal_reload()
+    flash("Nachtruhe gespeichert.", "success")
+    return redirect(url_for("index"))
+
+
 @app.route("/set_interval", methods=["POST"])
 def set_interval():
-    """Diashow-Intervall setzen."""
+    """Diashow-Intervall setzen. Akzeptiert Minuten + Sekunden oder Sekunden."""
     try:
-        seconds = int(request.form.get("interval", 300))
+        # Bevorzugt Minuten/Sekunden-Felder, sonst das reine Sekundenfeld
+        if request.form.get("minutes") is not None or request.form.get("seconds") is not None:
+            minutes = int(request.form.get("minutes") or 0)
+            secs = int(request.form.get("seconds") or 0)
+            seconds = minutes * 60 + secs
+        else:
+            seconds = int(request.form.get("interval", 300))
         if not (5 <= seconds <= 7200):
             flash("Intervall muss zwischen 5 und 7200 Sekunden liegen.", "error")
             return redirect(url_for("index"))
