@@ -55,6 +55,11 @@ SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
 DEFAULT_SHUFFLE = False      # Bilder in zufaelliger Reihenfolge zeigen
 DEFAULT_TRANSITION = True    # Weiche Ueberblendung beim Wechsel
 
+# Nachtruhe: Display nachts abschalten (Strom sparen)
+DEFAULT_SLEEP_ENABLED = False
+DEFAULT_SLEEP_START = "22:00"   # ab dieser Uhrzeit Display aus
+DEFAULT_SLEEP_END = "07:00"     # ab dieser Uhrzeit Display wieder an
+
 # Display-Einstellungen
 DISPLAY_WIDTH = 1920
 DISPLAY_HEIGHT = 1080
@@ -88,6 +93,9 @@ def get_settings():
     settings = {
         "shuffle": DEFAULT_SHUFFLE,
         "transition": DEFAULT_TRANSITION,
+        "sleep_enabled": DEFAULT_SLEEP_ENABLED,
+        "sleep_start": DEFAULT_SLEEP_START,
+        "sleep_end": DEFAULT_SLEEP_END,
     }
     try:
         if os.path.exists(SETTINGS_FILE):

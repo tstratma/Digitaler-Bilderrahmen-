@@ -5,6 +5,7 @@ Flask-App fuer die Verwaltung der Bilder vom iPhone aus.
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -307,6 +308,21 @@ def set_settings():
     config.set_setting("transition", request.form.get("transition") == "on")
     signal_reload()
     flash("Einstellungen gespeichert.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/set_sleep", methods=["POST"])
+def set_sleep():
+    """Nachtruhe speichern: Display nachts aus (Strom sparen)."""
+    config.set_setting("sleep_enabled", request.form.get("sleep_enabled") == "on")
+    for key in ("sleep_start", "sleep_end"):
+        val = (request.form.get(key) or "").strip()
+        if re.match(r"^\d{1,2}:\d{2}$", val):
+            h, m = (int(x) for x in val.split(":"))
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                config.set_setting(key, f"{h:02d}:{m:02d}")
+    signal_reload()
+    flash("Nachtruhe gespeichert.", "success")
     return redirect(url_for("index"))
 
 

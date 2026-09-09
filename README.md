@@ -96,6 +96,24 @@ Direkt vom iPhone im Web-Interface (`http://bilderrahmen.local:8080`) einstellba
   (30 Sek. / 1 / 5 / 10 / 30 Min.)
 - **Zufällige Reihenfolge** an/aus
 - **Weiche Überblendung** an/aus
+- **Nachtruhe** – Display zu festen Uhrzeiten aus/an (Strom sparen)
+
+### 🌙 Nachtruhe (nachts Display aus)
+
+Stell im Web-Interface „Aus ab" und „Wieder an" ein (z. B. 22:00 → 07:00,
+auch über Mitternacht). In diesem Zeitfenster schaltet die Diashow das
+**HDMI-Display in Standby** – das spart den Löwenanteil des Stroms (das Panel
+ist der größte Verbraucher). Der Raspberry Pi selbst läuft weiter (er kann
+sich aus einem echten Shutdown nicht selbst wieder einschalten), verbraucht
+aber nur wenige Watt; morgens geht das Display automatisch wieder an.
+
+Das Abschalten nutzt je nach System automatisch `vcgencmd display_power`
+(Raspberry Pi), `wlopm` (Wayland) oder `xset dpms` (X11).
+
+- Der Benutzer sollte in der Gruppe `video` sein (Standard beim `pi`-User):
+  `sudo usermod -aG video $USER`
+- **Raspberry Pi OS Bookworm/Wayland:** Schaltet das Panel nicht ab, hilft
+  `sudo apt install wlopm`.
 
 ### Weitere Werte in `config.py`
 

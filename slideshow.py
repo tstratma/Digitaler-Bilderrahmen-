@@ -10,8 +10,10 @@ import time
 import json
 import random
 import logging
+import subprocess
 import pygame
 import threading
+from datetime import datetime
 from pathlib import Path
 
 # Pfad fuer lokale Imports
@@ -149,6 +151,11 @@ class Slideshow:
         settings = config.get_settings()
         self.shuffle = bool(settings.get("shuffle", config.DEFAULT_SHUFFLE))
         self.transition = bool(settings.get("transition", config.DEFAULT_TRANSITION))
+        # Nachtruhe
+        self.sleep_enabled = bool(settings.get("sleep_enabled", config.DEFAULT_SLEEP_ENABLED))
+        self.sleep_start = settings.get("sleep_start", config.DEFAULT_SLEEP_START)
+        self.sleep_end = settings.get("sleep_end", config.DEFAULT_SLEEP_END)
+        self.is_sleeping = False
         self.running = True
         self.reload_requested = False
         self._last_signal_check = 0
@@ -198,8 +205,86 @@ class Slideshow:
                 logger.info("Zufaellige Reihenfolge: %s", "an" if new_shuffle else "aus")
                 # Bilderliste neu aufbauen (mit/ohne Zufall)
                 self.reload_requested = True
+            # Nachtruhe-Einstellungen uebernehmen
+            self.sleep_enabled = bool(settings.get("sleep_enabled", config.DEFAULT_SLEEP_ENABLED))
+            self.sleep_start = settings.get("sleep_start", config.DEFAULT_SLEEP_START)
+            self.sleep_end = settings.get("sleep_end", config.DEFAULT_SLEEP_END)
         except Exception:
             pass
+
+    # ── Nachtruhe / Display-Steuerung ──────────────────────────────────────
+    @staticmethod
+    def _parse_hhmm(value):
+        """'HH:MM' -> Minuten seit Mitternacht, oder None."""
+        try:
+            h, m = str(value).split(":")
+            h, m = int(h), int(m)
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                return h * 60 + m
+        except (ValueError, AttributeError):
+            pass
+        return None
+
+    def _in_sleep_window(self, now=None):
+        """True, wenn die aktuelle Uhrzeit im Nachtruhe-Fenster liegt."""
+        if not self.sleep_enabled:
+            return False
+        start = self._parse_hhmm(self.sleep_start)
+        end = self._parse_hhmm(self.sleep_end)
+        if start is None or end is None or start == end:
+            return False
+        now = now or datetime.now()
+        cur = now.hour * 60 + now.minute
+        if start < end:
+            return start <= cur < end
+        # Fenster ueber Mitternacht (z. B. 22:00 -> 07:00)
+        return cur >= start or cur < end
+
+    def _set_display_power(self, on):
+        """Schaltet das HDMI-Display an/aus (mehrere Methoden je nach System)."""
+        state = "1" if on else "0"
+        cmds = [
+            ["vcgencmd", "display_power", state],            # Raspberry Pi (HDMI-Signal)
+            ["wlopm", "--on" if on else "--off", "*"],       # Wayland (labwc/wayfire)
+            ["xset", "dpms", "force", "on" if on else "off"],  # X11 (DPMS)
+        ]
+        for cmd in cmds:
+            try:
+                subprocess.run(
+                    cmd, check=False, timeout=5,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
+
+    def enter_sleep(self):
+        """In den Nachtruhe-Modus wechseln: Display aus."""
+        if self.is_sleeping:
+            return
+        self.is_sleeping = True
+        logger.info("Nachtruhe: Display wird ausgeschaltet.")
+        # Bildschirm schwarz (falls das Panel nicht komplett abschaltet)
+        try:
+            self.screen.fill((0, 0, 0))
+            pygame.display.flip()
+        except Exception:
+            pass
+        self._set_display_power(False)
+
+    def wake_up(self):
+        """Aus der Nachtruhe aufwachen: Display an, Bild neu zeichnen."""
+        if not self.is_sleeping:
+            return
+        self.is_sleeping = False
+        logger.info("Nachtruhe beendet: Display wird eingeschaltet.")
+        self._set_display_power(True)
+        # aktuelles Bild wieder anzeigen
+        if self.current_surface is not None:
+            x = (self.screen_width - self.current_surface.get_width()) // 2
+            y = (self.screen_height - self.current_surface.get_height()) // 2
+            self.screen.fill((0, 0, 0))
+            self.screen.blit(self.current_surface, (x, y))
+            pygame.display.flip()
 
     def load_pygame_image(self, path):
         """Laedt ein Bild und skaliert es auf den Bildschirm."""
@@ -294,6 +379,19 @@ class Slideshow:
                 self.check_reload_signal()
                 self.check_interval_change()
                 self.check_settings_change()
+
+            # Nachtruhe: Display nachts aus / morgens wieder an
+            if self._in_sleep_window():
+                self.enter_sleep()
+            else:
+                self.wake_up()
+
+            if self.is_sleeping:
+                # Nichts anzeigen, kein Bildwechsel; Timer zuruecksetzen,
+                # damit nach dem Aufwachen die volle Anzeigedauer gilt.
+                last_change = current_time
+                pygame.time.wait(500)
+                continue
 
             # Reload verarbeiten
             if self.reload_requested:

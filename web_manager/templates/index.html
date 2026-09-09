@@ -271,6 +271,40 @@
       left: 22px;
       background: #fff;
     }
+
+    /* ── Zeit-Auswahl (Nachtruhe) ── */
+    .time-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .time-field { flex: 1; }
+    .time-field label {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-bottom: 5px;
+    }
+    .time-field input[type="time"] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 1rem;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .time-field input[type="time"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .hint-text {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-top: 12px;
+    }
     .preset-row {
       display: flex;
       gap: 8px;
@@ -549,6 +583,29 @@
         <input type="checkbox" name="transition" {% if settings.transition %}checked{% endif %} />
       </label>
       <button type="submit" class="btn btn-primary" style="margin-top:14px">💾 Einstellungen speichern</button>
+    </form>
+  </div>
+
+  <!-- ── Nachtruhe (Display aus, Strom sparen) ── -->
+  <div class="card">
+    <div class="card-title">Nachtruhe – Display aus</div>
+    <form action="/set_sleep" method="post">
+      <label class="toggle-row">
+        <span>🌙 Nachts Display ausschalten</span>
+        <input type="checkbox" name="sleep_enabled" {% if settings.sleep_enabled %}checked{% endif %} />
+      </label>
+      <div class="time-row">
+        <div class="time-field">
+          <label>Aus ab</label>
+          <input type="time" name="sleep_start" value="{{ settings.sleep_start }}" />
+        </div>
+        <div class="time-field">
+          <label>Wieder an</label>
+          <input type="time" name="sleep_end" value="{{ settings.sleep_end }}" />
+        </div>
+      </div>
+      <p class="hint-text">Spart Strom: Das Display geht in Standby, der Rest läuft weiter.</p>
+      <button type="submit" class="btn btn-primary" style="margin-top:12px">💾 Nachtruhe speichern</button>
     </form>
   </div>
 
