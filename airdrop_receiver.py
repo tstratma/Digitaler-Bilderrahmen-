@@ -38,10 +38,7 @@ import image_utils
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [receiver] %(levelname)s: %(message)s",
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler(sys.stdout),
-    ],
+    handlers=config.build_log_handlers("receiver"),
 )
 logger = logging.getLogger("receiver")
 

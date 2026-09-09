@@ -20,15 +20,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 
-os.makedirs(os.path.dirname(config.LOG_FILE), exist_ok=True) if os.path.dirname(config.LOG_FILE) else None
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [slideshow] %(levelname)s: %(message)s",
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler(sys.stdout),
-    ]
+    handlers=config.build_log_handlers("slideshow"),
 )
 logger = logging.getLogger("slideshow")
 

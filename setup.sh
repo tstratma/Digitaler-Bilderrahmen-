@@ -156,6 +156,9 @@ mkdir -p "${IMAGES_DIR}"
 mkdir -p "${INCOMING_DIR}"
 log "Bilder-Verzeichnisse erstellt."
 
+# Log-Datei vorab anlegen (damit sie dem Benutzer gehoert, nicht root)
+touch "${INSTALL_DIR}/bilderrahmen.log" 2>/dev/null || true
+
 # Berechtigungen setzen
 chown -R "${PI_USER}:${PI_USER}" "${INSTALL_DIR}"
 chmod -R u+rw "${INSTALL_DIR}"

@@ -2,6 +2,8 @@
 Zentrale Konfiguration fuer den Digitalen Bilderrahmen
 """
 import os
+import sys
+import logging
 
 # Basis-Verzeichnis
 BASE_DIR = "/home/pi/Digitaler-Bilderrahmen"
@@ -66,6 +68,27 @@ DISPLAY_HEIGHT = 1080
 FULLSCREEN = True
 SHOW_FILENAME = False  # Dateiname im Bild einblenden (fuer Bilderrahmen meist unerwuenscht)
 FILENAME_DISPLAY_DURATION = 3  # Sekunden
+
+
+def build_log_handlers(tag=""):
+    """
+    Erstellt Logging-Handler. Schreibt nach Moeglichkeit in die Log-Datei,
+    faellt aber robust auf reines Konsolen-Logging zurueck, wenn die Datei
+    nicht beschreibbar ist (z. B. falsche Dateirechte) - die App soll
+    deswegen NICHT abstuerzen.
+    """
+    handlers = [logging.StreamHandler(sys.stdout)]
+    try:
+        d = os.path.dirname(LOG_FILE)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        handlers.insert(0, logging.FileHandler(LOG_FILE))
+    except OSError as e:
+        sys.stderr.write(
+            f"[WARN]{(' ' + tag) if tag else ''} Log-Datei nicht beschreibbar "
+            f"({LOG_FILE}): {e}. Logge nur auf die Konsole.\n"
+        )
+    return handlers
 
 
 def get_interval():
