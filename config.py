@@ -5,8 +5,10 @@ import os
 import sys
 import logging
 
-# Basis-Verzeichnis
-BASE_DIR = "/home/pi/Digitaler-Bilderrahmen"
+# Basis-Verzeichnis = der Projektordner (dort, wo diese Datei liegt).
+# Funktioniert in jedem Pfad/fuer jeden Benutzer, ohne dass setup.sh diese
+# Datei anpassen muss (lokale Aenderungen wuerden sonst 'git pull' blockieren).
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Bilder-Verzeichnis
 IMAGES_DIR = os.path.join(BASE_DIR, "images")

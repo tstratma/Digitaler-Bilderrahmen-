@@ -13,3 +13,4 @@ incoming/
 .reload_signal
 hidden_images.json
 image_order.json
+settings.json

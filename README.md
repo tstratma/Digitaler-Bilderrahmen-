@@ -59,7 +59,8 @@ Zwei zuverlässige Wege, Fotos vom iPhone auf den Rahmen zu bringen:
 | `image_utils.py` | HEIC/HEIF-Umwandlung für iPhone-Fotos |
 | `config.py` | Zentrale Konfiguration (Intervall, Pfade, Formate …) |
 | `setup.sh` | Automatische Installation auf dem Raspberry Pi |
-| `services/*.service` | systemd-Dienste (Autostart) |
+| `wifi_watchdog.sh` | WLAN-Wächter: verbindet automatisch neu, wenn das WLAN wegbricht |
+| `services/*` | systemd-Dienste (Autostart) + Timer für den WLAN-Wächter |
 
 ---
 
@@ -84,6 +85,21 @@ Nach dem Neustart:
 > Umgebung (X11 *oder* Wayland). Deshalb **nicht** den Slideshow-Dienst als
 > System-Dienst per `systemctl` erzwingen – der Autostart ist der robuste Weg.
 > Für einen reinen Kiosk ohne Desktop siehe „Ohne Desktop" weiter unten.
+
+### 🔄 Aktualisieren
+
+```bash
+cd ~/Digitaler-Bilderrahmen
+git pull
+sudo bash setup.sh
+sudo reboot
+```
+
+Das Setup verändert keine Dateien im Projektordner, deshalb klappt `git pull`
+immer. Einmalig gilt das nicht für Installationen von **vor dem WLAN-Wächter**:
+Dort hat das alte Setup Pfade direkt in die Dateien geschrieben, und `git pull`
+bricht mit *„Your local changes … would be overwritten"* ab. Dann einmal vorher
+`git stash` ausführen. Bilder und Einstellungen bleiben dabei erhalten.
 
 ---
 
@@ -146,6 +162,41 @@ tail -f ~/Digitaler-Bilderrahmen/bilderrahmen.log
 
 Diashow-Steuerung per Tastatur (falls Tastatur angeschlossen):
 `→`/`Leertaste` weiter, `←` zurück, `Esc` beenden.
+
+---
+
+## 🛜 WLAN bricht ab / Fenster „WLAN-Authentifizierung"
+
+**Symptom:** Nach einiger Zeit erscheint der Dialog „WLAN-Authentifizierung",
+der Pi ist nicht mehr erreichbar, und erst ein Neustart hilft.
+
+**Ursache:** Das kommt von NetworkManager (Raspberry Pi OS), nicht von der
+Diashow. Bricht das WLAN kurz ab (Energiesparmodus des WLAN-Chips, der Router
+erneuert seinen Schlüssel, schwaches Signal hinter dem Metallrücken des
+Displays, zu schwaches Netzteil), hält NetworkManager das manchmal für ein
+falsches Passwort. Er fragt dann per Dialog nach und versucht es **nicht mehr
+von selbst** – bis zum Neustart.
+
+**Was `setup.sh` dagegen einrichtet:**
+
+- WLAN-Energiesparmodus aus (`/etc/NetworkManager/conf.d/bilderrahmen-wifi-powersave.conf`)
+- **WLAN-Wächter** (`wifi_watchdog.sh`, alle 2 Minuten): Ist das WLAN weg,
+  verbindet er die gespeicherte Verbindung neu. Der Passwort-Dialog
+  verschwindet dabei wieder.
+- Die Diashow minimiert sich nicht mehr, wenn ein System-Dialog aufgeht,
+  und holt ihr Fenster notfalls selbst zurück.
+
+**Ursache eingrenzen:**
+
+```bash
+journalctl -t bilderrahmen-wlan                  # Wann hat der Wächter neu verbunden?
+journalctl -u NetworkManager -b | grep -iE "wlan0|supplicant|secrets|new key" | tail -n 30
+vcgencmd get_throttled                           # 0x0 = Stromversorgung ok
+nmcli -f IN-USE,SSID,SIGNAL,SECURITY dev wifi    # Signalstärke (unter ~40 = schwach)
+```
+
+`vcgencmd get_throttled` ungleich `0x0` heißt Unterspannung. Dann braucht der
+Pi ein eigenes 5 V/3 A-Netzteil (nicht über die Display-Platine versorgen).
 
 ---
 

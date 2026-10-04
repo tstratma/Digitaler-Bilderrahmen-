@@ -1,0 +1,8 @@
+[Unit]
+Description=Digitaler Bilderrahmen - WLAN pruefen und bei Bedarf neu verbinden
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/pi/Digitaler-Bilderrahmen/wifi_watchdog.sh
+TimeoutStartSec=150

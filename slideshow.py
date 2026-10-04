@@ -116,6 +116,10 @@ def scale_image_to_screen(surface, screen_width, screen_height):
 class Slideshow:
     def __init__(self):
         os.environ.setdefault("DISPLAY", ":0")
+        # Vollbild NICHT minimieren, wenn ein anderes Fenster den Fokus bekommt
+        # (z. B. System-Dialoge wie die WLAN-Passwortabfrage). Sonst verschwindet
+        # die Diashow und der Desktop bleibt sichtbar.
+        os.environ.setdefault("SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS", "0")
         pygame.init()
         pygame.mouse.set_visible(False)
 
@@ -151,6 +155,7 @@ class Slideshow:
         self.sleep_start = settings.get("sleep_start", config.DEFAULT_SLEEP_START)
         self.sleep_end = settings.get("sleep_end", config.DEFAULT_SLEEP_END)
         self.is_sleeping = False
+        self._window_hidden = False
         self.running = True
         self.reload_requested = False
         self._last_signal_check = 0
@@ -273,13 +278,39 @@ class Slideshow:
         self.is_sleeping = False
         logger.info("Nachtruhe beendet: Display wird eingeschaltet.")
         self._set_display_power(True)
-        # aktuelles Bild wieder anzeigen
-        if self.current_surface is not None:
-            x = (self.screen_width - self.current_surface.get_width()) // 2
-            y = (self.screen_height - self.current_surface.get_height()) // 2
-            self.screen.fill((0, 0, 0))
-            self.screen.blit(self.current_surface, (x, y))
-            pygame.display.flip()
+        self._redraw_current()
+
+    def _redraw_current(self):
+        """Zeichnet das aktuelle Bild erneut (z. B. nach Aufwachen/Wiederherstellen)."""
+        if self.current_surface is None:
+            return
+        x = (self.screen_width - self.current_surface.get_width()) // 2
+        y = (self.screen_height - self.current_surface.get_height()) // 2
+        self.screen.fill((0, 0, 0))
+        self.screen.blit(self.current_surface, (x, y))
+        pygame.display.flip()
+
+    def _ensure_visible(self):
+        """
+        Holt das Diashow-Fenster zurueck, falls es trotzdem minimiert wurde
+        (z. B. durch einen System-Dialog wie die WLAN-Passwortabfrage).
+        """
+        try:
+            if pygame.display.get_active():
+                if self._window_hidden:
+                    self._window_hidden = False
+                    logger.info("Diashow-Fenster wieder sichtbar.")
+                    self._redraw_current()
+                return
+            if not self._window_hidden:
+                self._window_hidden = True
+                logger.warning("Diashow-Fenster minimiert - hole es zurueck.")
+            from pygame._sdl2.video import Window
+            win = Window.from_display_module()
+            win.restore()
+            win.focus()
+        except Exception as e:
+            logger.debug("Fenster konnte nicht wiederhergestellt werden: %s", e)
 
     def load_pygame_image(self, path):
         """Laedt ein Bild und skaliert es auf den Bildschirm."""
@@ -374,6 +405,8 @@ class Slideshow:
                 self.check_reload_signal()
                 self.check_interval_change()
                 self.check_settings_change()
+                if not self.is_sleeping:
+                    self._ensure_visible()
 
             # Nachtruhe: Display nachts aus / morgens wieder an
             if self._in_sleep_window():

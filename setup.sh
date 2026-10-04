@@ -29,6 +29,18 @@ warn()   { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()  { echo -e "${RED}[ERR]${NC}  $*" >&2; }
 header() { echo -e "\n${BOLD}${BLUE}==> $*${NC}"; }
 
+# systemd-Unit aus der Vorlage erzeugen und Benutzer/Pfade einsetzen.
+# Die Vorlage im Projektordner bleibt unveraendert - sonst blockieren
+# lokale Aenderungen spaeter jedes 'git pull'.
+install_unit() {
+  local src="$1" dst="$2"
+  sed -e "s|/home/pi/|${PI_HOME}/|g" \
+      -e "s|^User=pi$|User=${PI_USER}|" \
+      -e "s|^Group=pi$|Group=${PI_USER}|" \
+      "${src}" > "${dst}"
+  chmod 644 "${dst}"
+}
+
 # ── Root-Check ──
 if [[ $EUID -ne 0 ]]; then
   error "Dieses Skript muss als root ausgefuehrt werden: sudo bash setup.sh"
@@ -165,28 +177,13 @@ chmod -R u+rw "${INSTALL_DIR}"
 chmod +x "${INSTALL_DIR}/slideshow.py" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/airdrop_receiver.py" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/web_manager/app.py" 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/wifi_watchdog.sh" 2>/dev/null || true
 
 log "Berechtigungen gesetzt."
 
-# ── Konfiguration anpassen ──
-header "Konfiguration anpassen"
-
-CONFIG_FILE="${INSTALL_DIR}/config.py"
-if [[ -f "${CONFIG_FILE}" ]]; then
-  # BASE_DIR auf den aktuellen Benutzer anpassen
-  sed -i "s|/home/pi/Digitaler-Bilderrahmen|${INSTALL_DIR}|g" "${CONFIG_FILE}"
-  log "config.py angepasst: BASE_DIR = ${INSTALL_DIR}"
-fi
-
-# Service-Dateien anpassen
-for svc_file in "${SERVICES_DIR}"/*.service; do
-  if [[ -f "${svc_file}" ]]; then
-    sed -i "s|/home/pi|${PI_HOME}|g" "${svc_file}"
-    sed -i "s|User=pi|User=${PI_USER}|g" "${svc_file}"
-    sed -i "s|Group=pi|Group=${PI_USER}|g" "${svc_file}"
-    log "Service-Datei angepasst: $(basename "${svc_file}")"
-  fi
-done
+# Hinweis: config.py ermittelt den Projektordner selbst, und die Service-
+# Dateien werden erst beim Installieren angepasst (install_unit). Das Setup
+# veraendert daher keine Dateien im Git-Ordner -> 'git pull' klappt immer.
 
 # ── Avahi / mDNS konfigurieren ──
 header "Avahi (mDNS) konfigurieren"
@@ -267,8 +264,7 @@ for svc in "${SERVICES[@]}"; do
   dst="${SYSTEMD_DIR}/${svc}"
 
   if [[ -f "${src}" ]]; then
-    cp "${src}" "${dst}"
-    chmod 644 "${dst}"
+    install_unit "${src}" "${dst}"
     systemctl daemon-reload
     systemctl enable "${svc}"
     log "Service installiert und aktiviert: ${svc}"
@@ -281,16 +277,50 @@ done
 # (laeuft besser als Desktop-Autostart, da Display-Zugriff benoetigt wird)
 SLIDESHOW_SVC="bilderrahmen-slideshow.service"
 if [[ -f "${SERVICES_DIR}/${SLIDESHOW_SVC}" ]]; then
-  cp "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
-  chmod 644 "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
+  install_unit "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
   systemctl daemon-reload
   # Als User-Service einrichten
   USER_SYSTEMD="${PI_HOME}/.config/systemd/user"
   mkdir -p "${USER_SYSTEMD}"
-  cp "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${USER_SYSTEMD}/${SLIDESHOW_SVC}"
+  install_unit "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${USER_SYSTEMD}/${SLIDESHOW_SVC}"
   chown -R "${PI_USER}:${PI_USER}" "${PI_HOME}/.config/systemd"
   log "Slideshow-Service als User-Service eingerichtet."
   warn "Slideshow laeuft via Desktop-Autostart (DISPLAY erforderlich)."
+fi
+
+# ── WLAN stabilisieren ──
+header "WLAN stabilisieren"
+
+# 1) WLAN-Energiesparmodus aus: haeufige Ursache fuer Verbindungsabbrueche
+#    des WLAN-Chips im Raspberry Pi
+if [[ -d /etc/NetworkManager ]]; then
+  mkdir -p /etc/NetworkManager/conf.d
+  cat > /etc/NetworkManager/conf.d/bilderrahmen-wifi-powersave.conf <<'EOF'
+# Digitaler Bilderrahmen: WLAN-Energiesparmodus aus (verhindert Abbrueche)
+[connection]
+wifi.powersave = 2
+EOF
+  log "WLAN-Energiesparmodus dauerhaft deaktiviert (gilt ab Neustart)."
+else
+  warn "NetworkManager nicht gefunden - Energiespar-Einstellung uebersprungen."
+fi
+if command -v iw &>/dev/null; then
+  iw dev wlan0 set power_save off 2>/dev/null || true   # sofort wirksam
+fi
+
+# 2) WLAN-Waechter: verbindet automatisch neu, wenn das WLAN wegbricht
+#    (statt im Passwort-Dialog haengenzubleiben)
+WATCHDOG_SVC="bilderrahmen-wifi-watchdog.service"
+WATCHDOG_TIMER="bilderrahmen-wifi-watchdog.timer"
+if [[ -f "${SERVICES_DIR}/${WATCHDOG_SVC}" && -f "${SERVICES_DIR}/${WATCHDOG_TIMER}" ]]; then
+  install_unit "${SERVICES_DIR}/${WATCHDOG_SVC}" "${SYSTEMD_DIR}/${WATCHDOG_SVC}"
+  install_unit "${SERVICES_DIR}/${WATCHDOG_TIMER}" "${SYSTEMD_DIR}/${WATCHDOG_TIMER}"
+  systemctl daemon-reload
+  systemctl enable --now "${WATCHDOG_TIMER}" \
+    && log "WLAN-Waechter aktiv (prueft alle 2 Minuten, verbindet bei Bedarf neu)." \
+    || warn "WLAN-Waechter konnte nicht aktiviert werden."
+else
+  warn "WLAN-Waechter-Dateien nicht gefunden - uebersprungen."
 fi
 
 # ── Dienste starten ──
@@ -356,6 +386,7 @@ echo ""
 echo -e "  4. ${YELLOW}Dienste pruefen:${NC}"
 echo -e "     sudo systemctl status bilderrahmen-web"
 echo -e "     sudo systemctl status bilderrahmen-airdrop"
+echo -e "     journalctl -t bilderrahmen-wlan     (WLAN-Waechter)"
 echo ""
 echo -e "  5. ${YELLOW}Logs anzeigen:${NC}"
 echo -e "     tail -f ${INSTALL_DIR}/bilderrahmen.log"
