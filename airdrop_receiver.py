@@ -1,7 +1,26 @@
 #!/usr/bin/env python3
 """
-Digitaler Bilderrahmen - AirDrop-Empfaenger
-Empfaengt Bilder via AirDrop (opendrop) und speichert sie im Bilder-Verzeichnis.
+Digitaler Bilderrahmen - Empfaenger fuer neue Bilder ("Eingangs-Watcher")
+
+WICHTIG - ehrliche Einordnung zu AirDrop:
+---------------------------------------------------------------------------
+Echtes Apple-AirDrop ist ein proprietaeres Protokoll (AWDL) und laeuft NICHT
+einfach auf einem Raspberry Pi. Es benoetigt:
+  * einen WLAN-Adapter im Monitor-Mode mit Frame-Injection (die interne
+    Pi-4-WLAN-Karte nur mit Nexmon-Firmware-Patches),
+  * den 'owl'-Daemon (Open Wireless Link) als root fuer das awdl0-Interface,
+  * das reverse-engineerte 'opendrop'-Tool von seemoo-lab.
+Das ist fragil, blockiert waehrenddessen das normale WLAN und ist fuer einen
+Bilderrahmen im Alltag nicht praktikabel.
+
+DESHALB ist der zuverlaessige Weg vom iPhone: das Web-Interface
+(http://<Pi>:8080) - dort Bilder direkt aus der Fotos-App hochladen.
+Tipp: Im Safari "Zum Home-Bildschirm" hinzufuegen -> fuehlt sich an wie eine App.
+
+Dieses Skript ueberwacht zusaetzlich ein Eingangs-Verzeichnis ("incoming/").
+Alles, was dort landet (per SMB/Dateien-App, scp, USB-Stick, ...), wird
+automatisch in die Diashow uebernommen - inkl. HEIC->JPEG-Umwandlung.
+---------------------------------------------------------------------------
 """
 
 import os
@@ -9,23 +28,19 @@ import sys
 import time
 import shutil
 import logging
-import threading
 from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
+import image_utils
 
-# Logging einrichten
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [airdrop] %(levelname)s: %(message)s",
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler(sys.stdout),
-    ]
+    format="%(asctime)s [receiver] %(levelname)s: %(message)s",
+    handlers=config.build_log_handlers("receiver"),
 )
-logger = logging.getLogger("airdrop")
+logger = logging.getLogger("receiver")
 
 
 def signal_slideshow_reload():
@@ -38,200 +53,143 @@ def signal_slideshow_reload():
         logger.warning("Konnte Reload-Signal nicht senden: %s", e)
 
 
-def is_allowed_extension(filename):
-    """Prueft ob die Dateiendung erlaubt ist."""
-    ext = Path(filename).suffix.lower()
-    return ext in config.ALLOWED_EXTENSIONS
+def is_supported_upload(filename) -> bool:
+    """Prueft ob die Dateiendung akzeptiert wird (inkl. HEIC)."""
+    return Path(filename).suffix.lower() in config.UPLOAD_EXTENSIONS
 
 
-def save_received_file(source_path, original_name=None):
+def unique_dest(name: str) -> Path:
+    """Erzeugt einen kollisionsfreien Zielpfad im Bilder-Verzeichnis."""
+    dest = Path(config.IMAGES_DIR) / name
+    if dest.exists():
+        stem, suffix = Path(name).stem, Path(name).suffix
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dest = Path(config.IMAGES_DIR) / f"{stem}_{ts}{suffix}"
+    return dest
+
+
+def import_file(source_path, original_name=None):
     """
-    Speichert eine empfangene Datei ins Bilder-Verzeichnis.
-    Gibt den Zielpfad zurueck oder None bei Fehler.
+    Uebernimmt eine Datei ins Bilder-Verzeichnis (mit HEIC-Umwandlung).
+    Gibt den Zielpfad zurueck oder None bei Fehler/nicht unterstuetzt.
     """
     os.makedirs(config.IMAGES_DIR, exist_ok=True)
+    source_path = Path(source_path)
+    original_name = original_name or source_path.name
 
-    if original_name is None:
-        original_name = Path(source_path).name
-
-    if not is_allowed_extension(original_name):
+    if not is_supported_upload(original_name):
         logger.warning("Unerlaubte Dateiendung: %s", original_name)
         return None
 
-    # Eindeutigen Dateinamen erstellen falls bereits vorhanden
-    dest_path = Path(config.IMAGES_DIR) / original_name
-    if dest_path.exists():
-        stem = Path(original_name).stem
-        suffix = Path(original_name).suffix
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        original_name = f"{stem}_{timestamp}{suffix}"
-        dest_path = Path(config.IMAGES_DIR) / original_name
-
+    dest = unique_dest(original_name)
     try:
-        shutil.copy2(str(source_path), str(dest_path))
-        logger.info("Bild gespeichert: %s", dest_path)
-        signal_slideshow_reload()
-        return str(dest_path)
+        shutil.copy2(str(source_path), str(dest))
     except Exception as e:
-        logger.error("Fehler beim Speichern: %s", e)
+        logger.error("Fehler beim Kopieren von %s: %s", original_name, e)
         return None
 
-
-class OpenDropReceiver:
-    """Wrapper fuer die opendrop-Bibliothek."""
-
-    def __init__(self):
-        self.running = False
-        self.opendrop_available = self._check_opendrop()
-
-    def _check_opendrop(self):
-        """Prueft ob opendrop verfuegbar ist."""
-        try:
-            import opendrop  # noqa: F401
-            logger.info("opendrop-Bibliothek gefunden.")
-            return True
-        except ImportError:
+    # iPhone-HEIC/HEIF -> JPEG (sonst kann die Diashow es nicht anzeigen)
+    if image_utils.is_heic(dest):
+        converted = image_utils.normalize_image(dest)
+        if converted is None:
             logger.warning(
-                "opendrop nicht gefunden. Installieren mit: pip3 install opendrop\n"
-                "Fallback-Verzeichnis-Watcher wird verwendet."
+                "HEIC nicht umgewandelt (pillow-heif fehlt?): %s", dest.name
             )
+            return None
+        dest = Path(converted)
+
+    logger.info("Bild uebernommen: %s", dest.name)
+    signal_slideshow_reload()
+    return str(dest)
+
+
+def _wait_until_stable(filepath, checks=2, delay=1.0):
+    """Wartet, bis die Dateigroesse stabil ist (Upload abgeschlossen)."""
+    last = -1
+    stable = 0
+    for _ in range(30):  # max. ~30s
+        try:
+            size = os.path.getsize(filepath)
+        except OSError:
             return False
+        if size == last and size > 0:
+            stable += 1
+            if stable >= checks:
+                return True
+        else:
+            stable = 0
+            last = size
+        time.sleep(delay)
+    return True  # Timeout: trotzdem versuchen
 
-    def start(self):
-        """Startet den AirDrop-Empfaenger."""
-        if not self.opendrop_available:
-            self._run_fallback_watcher()
-            return
 
-        self.running = True
-        logger.info("Starte AirDrop-Empfaenger (opendrop)...")
+def run_incoming_watcher():
+    """
+    Ueberwacht das Eingangs-Verzeichnis 'incoming/' und uebernimmt neue
+    Bilder automatisch in die Diashow.
+    """
+    watch_dir = os.path.join(os.path.dirname(config.IMAGES_DIR), "incoming")
+    os.makedirs(watch_dir, exist_ok=True)
 
-        try:
-            self._run_opendrop()
-        except Exception as e:
-            logger.error("AirDrop-Fehler: %s", e)
-            logger.info("Starte Fallback-Datei-Watcher...")
-            self._run_fallback_watcher()
-
-    def _run_opendrop(self):
-        """Startet den echten opendrop-Empfaenger."""
-        # opendrop API kann je nach Version leicht abweichen
-        # Unterstuetzt wird: opendrop >= 3.0
-        try:
-            import asyncio
-            from opendrop.server import OpenDropServer
-
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            async def run_server():
-                server = OpenDropServer()
-
-                async def on_receive(request):
-                    logger.info(
-                        "AirDrop-Empfang: %d Datei(en)", len(request.files)
-                    )
-                    for file_info in request.files:
-                        tmp_path = file_info.data
-                        name = file_info.name or Path(tmp_path).name
-                        result = save_received_file(tmp_path, name)
-                        if result:
-                            logger.info("Gespeichert: %s", result)
-
-                server.on_receive = on_receive
-                await server.start()
-                logger.info("AirDrop-Server laeuft. Geraetename: Bilderrahmen")
-
-                while self.running:
-                    await asyncio.sleep(1)
-
-                await server.stop()
-
-            loop.run_until_complete(run_server())
-
-        except (ImportError, AttributeError):
-            # Aeltere opendrop-API (synchron)
-            logger.info("Versuche aeltere opendrop-API...")
-            from opendrop import OpenDrop
-
-            od = OpenDrop(
-                server_name="Bilderrahmen",
-                server_model="Raspberry Pi",
-            )
-
-            def file_received(sender_name, file_path):
-                logger.info("Empfangen von %s: %s", sender_name, file_path)
-                save_received_file(file_path)
-
-            od.run(callback=file_received)
-
-    def _run_fallback_watcher(self):
-        """
-        Fallback: Ueberwacht ein Eingangsverzeichnis auf neue Dateien.
-        Nuetzlich wenn opendrop nicht verfuegbar ist oder nicht funktioniert.
-        """
-        watch_dir = os.path.join(os.path.dirname(config.IMAGES_DIR), "incoming")
-        os.makedirs(watch_dir, exist_ok=True)
-
-        logger.info("Fallback-Watcher aktiv.")
-        logger.info("Ueberwachtes Verzeichnis: %s", watch_dir)
-        logger.info(
-            "Dateien in dieses Verzeichnis kopieren, um sie hinzuzufuegen."
+    logger.info("=" * 60)
+    logger.info("Eingangs-Watcher aktiv.")
+    logger.info("Ueberwachtes Verzeichnis: %s", watch_dir)
+    logger.info("Dateien hierher kopieren (SMB/Dateien-App, scp, ...) ->")
+    logger.info("werden automatisch in die Diashow uebernommen.")
+    if not image_utils.heic_supported():
+        logger.warning(
+            "HEIC-Unterstuetzung fehlt (pillow-heif nicht installiert). "
+            "iPhone-Fotos ggf. als JPEG senden oder pillow-heif installieren."
         )
+    logger.info("=" * 60)
 
-        known_files = set(os.listdir(watch_dir))
-        self.running = True
+    known = set(os.listdir(watch_dir))
+    running = True
 
-        while self.running:
-            try:
-                current_files = set(os.listdir(watch_dir))
-                new_files = current_files - known_files
+    while running:
+        try:
+            current = set(os.listdir(watch_dir))
+            new_files = current - known
 
-                for filename in sorted(new_files):
-                    filepath = os.path.join(watch_dir, filename)
-                    if os.path.isfile(filepath) and is_allowed_extension(filename):
-                        logger.info("Neue Datei entdeckt: %s", filename)
-                        # Kurz warten bis Datei vollstaendig geschrieben ist
-                        time.sleep(2)
-                        result = save_received_file(filepath, filename)
-                        if result:
-                            try:
-                                os.remove(filepath)
-                                logger.info("Quelldatei entfernt: %s", filepath)
-                            except Exception:
-                                pass
+            for filename in sorted(new_files):
+                filepath = os.path.join(watch_dir, filename)
+                if not os.path.isfile(filepath):
+                    continue
+                if not is_supported_upload(filename):
+                    logger.info("Ignoriere (Format): %s", filename)
+                    continue
 
-                known_files = set(os.listdir(watch_dir))
-                time.sleep(3)
+                logger.info("Neue Datei entdeckt: %s", filename)
+                if not _wait_until_stable(filepath):
+                    continue
 
-            except KeyboardInterrupt:
-                self.running = False
-            except Exception as e:
-                logger.error("Fehler im Fallback-Watcher: %s", e)
-                time.sleep(5)
+                if import_file(filepath, filename):
+                    try:
+                        os.remove(filepath)
+                        logger.info("Quelldatei entfernt: %s", filename)
+                    except OSError:
+                        pass
 
-    def stop(self):
-        """Stoppt den AirDrop-Empfaenger."""
-        self.running = False
-        logger.info("AirDrop-Empfaenger gestoppt.")
+            known = set(os.listdir(watch_dir))
+            time.sleep(3)
+
+        except KeyboardInterrupt:
+            running = False
+        except Exception as e:
+            logger.error("Fehler im Eingangs-Watcher: %s", e)
+            time.sleep(5)
 
 
 def main():
-    """Hauptfunktion."""
     os.makedirs(config.IMAGES_DIR, exist_ok=True)
 
-    logger.info("=" * 55)
-    logger.info("Digitaler Bilderrahmen - AirDrop-Empfaenger")
+    logger.info("Digitaler Bilderrahmen - Eingangs-Watcher")
     logger.info("Bilder-Verzeichnis: %s", config.IMAGES_DIR)
-    logger.info("=" * 55)
-
-    receiver = OpenDropReceiver()
 
     try:
-        receiver.start()
+        run_incoming_watcher()
     except KeyboardInterrupt:
-        logger.info("AirDrop-Empfaenger durch Benutzer gestoppt.")
-        receiver.stop()
+        logger.info("Watcher durch Benutzer gestoppt.")
     except Exception as e:
         logger.exception("Schwerwiegender Fehler: %s", e)
         sys.exit(1)

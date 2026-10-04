@@ -29,6 +29,18 @@ warn()   { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error()  { echo -e "${RED}[ERR]${NC}  $*" >&2; }
 header() { echo -e "\n${BOLD}${BLUE}==> $*${NC}"; }
 
+# systemd-Unit aus der Vorlage erzeugen und Benutzer/Pfade einsetzen.
+# Die Vorlage im Projektordner bleibt unveraendert - sonst blockieren
+# lokale Aenderungen spaeter jedes 'git pull'.
+install_unit() {
+  local src="$1" dst="$2"
+  sed -e "s|/home/pi/|${PI_HOME}/|g" \
+      -e "s|^User=pi$|User=${PI_USER}|" \
+      -e "s|^Group=pi$|Group=${PI_USER}|" \
+      "${src}" > "${dst}"
+  chmod 644 "${dst}"
+}
+
 # ── Root-Check ──
 if [[ $EUID -ne 0 ]]; then
   error "Dieses Skript muss als root ausgefuehrt werden: sudo bash setup.sh"
@@ -68,16 +80,15 @@ PACKAGES=(
   libffi-dev
   build-essential
   git
-  # Avahi / mDNS (fuer AirDrop)
+  # HEIC/HEIF (iPhone-Fotos) -> JPEG
+  libheif1
+  libde265-0
+  # Avahi / mDNS (Geraet im Netz per Namen findbar: bilderrahmen.local)
   avahi-daemon
   avahi-utils
-  libavahi-compat-libdnssd-dev
-  # Bluetooth (fuer AirDrop)
-  bluetooth
-  bluez
-  libbluetooth-dev
-  # Netatalk (AFP / AirDrop Unterstuetzung)
-  netatalk
+  # Samba: Ordnerfreigabe fuer die iPhone "Dateien"-App (SMB)
+  samba
+  samba-common-bin
   # Sonstige Tools
   feh
   imagemagick
@@ -90,30 +101,45 @@ apt-get install -y "${PACKAGES[@]}" || {
 }
 log "System-Pakete installiert."
 
-# ── Python-Pakete installieren ──
-header "Python-Pakete installieren"
+# ── Python-Pakete ──
+header "Python-Abhaengigkeiten pruefen"
 
-pip3 install --break-system-packages --upgrade pip 2>/dev/null || pip3 install --upgrade pip
+# Auf Raspberry Pi OS Bookworm ist die System-Python-Umgebung
+# "externally managed" -> 'pip install' schlaegt fehl. Deshalb kommt das
+# Meiste ueber apt (oben: python3-flask, python3-pygame, python3-pil).
+# Kein pip-Upgrade noetig.
+#
+# Nur pillow-heif (HEIC/HEIF von iPhone-Fotos) ist ggf. nicht als apt-Paket
+# vorhanden und wird robust nachinstalliert.
 
-PYTHON_PACKAGES=(
-  flask
-  werkzeug
-  pillow
-  opendrop
-  requests
-)
+HEIF_OK=0
 
-for pkg in "${PYTHON_PACKAGES[@]}"; do
-  echo -n "  Installiere ${pkg}... "
-  if pip3 install --break-system-packages "${pkg}" 2>/dev/null || pip3 install "${pkg}"; then
-    echo -e "${GREEN}OK${NC}"
-  else
-    echo -e "${YELLOW}FEHLER (nicht kritisch)${NC}"
-    warn "  ${pkg} konnte nicht installiert werden."
+# 1) Bevorzugt via apt (falls paketiert)
+if apt-get install -y python3-pillow-heif >/dev/null 2>&1; then
+  HEIF_OK=1
+  log "pillow-heif via apt installiert (HEIC-Unterstuetzung aktiv)."
+fi
+
+# 2) Sonst via pip mit --break-system-packages (Bookworm-konform)
+if [[ "${HEIF_OK}" -ne 1 ]]; then
+  if pip3 install --break-system-packages pillow-heif >/dev/null 2>&1; then
+    HEIF_OK=1
+    log "pillow-heif via pip installiert (HEIC-Unterstuetzung aktiv)."
   fi
-done
+fi
 
-log "Python-Pakete installiert."
+if [[ "${HEIF_OK}" -ne 1 ]]; then
+  warn "pillow-heif konnte nicht installiert werden."
+  warn "  -> iPhone-HEIC-Fotos werden dann nicht automatisch umgewandelt."
+  warn "  -> Alternative am iPhone: Einstellungen -> Kamera -> Formate"
+  warn "     -> 'Maximale Kompatibilitaet' (nimmt Fotos direkt als JPEG auf)."
+fi
+
+# Hinweis: 'opendrop' (echtes AirDrop) wird bewusst NICHT installiert.
+# Es benoetigt den 'owl'-Daemon + passende WLAN-Hardware und ist fuer den
+# Alltag nicht praktikabel. Siehe README.md.
+
+log "Python-Abhaengigkeiten bereit (Flask/pygame/Pillow via apt)."
 
 # ── Verzeichnisse erstellen ──
 header "Verzeichnisse erstellen"
@@ -142,34 +168,22 @@ mkdir -p "${IMAGES_DIR}"
 mkdir -p "${INCOMING_DIR}"
 log "Bilder-Verzeichnisse erstellt."
 
+# Log-Datei vorab anlegen (damit sie dem Benutzer gehoert, nicht root)
+touch "${INSTALL_DIR}/bilderrahmen.log" 2>/dev/null || true
+
 # Berechtigungen setzen
 chown -R "${PI_USER}:${PI_USER}" "${INSTALL_DIR}"
 chmod -R u+rw "${INSTALL_DIR}"
 chmod +x "${INSTALL_DIR}/slideshow.py" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/airdrop_receiver.py" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/web_manager/app.py" 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/wifi_watchdog.sh" 2>/dev/null || true
 
 log "Berechtigungen gesetzt."
 
-# ── Konfiguration anpassen ──
-header "Konfiguration anpassen"
-
-CONFIG_FILE="${INSTALL_DIR}/config.py"
-if [[ -f "${CONFIG_FILE}" ]]; then
-  # BASE_DIR auf den aktuellen Benutzer anpassen
-  sed -i "s|/home/pi/Digitaler-Bilderrahmen|${INSTALL_DIR}|g" "${CONFIG_FILE}"
-  log "config.py angepasst: BASE_DIR = ${INSTALL_DIR}"
-fi
-
-# Service-Dateien anpassen
-for svc_file in "${SERVICES_DIR}"/*.service; do
-  if [[ -f "${svc_file}" ]]; then
-    sed -i "s|/home/pi|${PI_HOME}|g" "${svc_file}"
-    sed -i "s|User=pi|User=${PI_USER}|g" "${svc_file}"
-    sed -i "s|Group=pi|Group=${PI_USER}|g" "${svc_file}"
-    log "Service-Datei angepasst: $(basename "${svc_file}")"
-  fi
-done
+# Hinweis: config.py ermittelt den Projektordner selbst, und die Service-
+# Dateien werden erst beim Installieren angepasst (install_unit). Das Setup
+# veraendert daher keine Dateien im Git-Ordner -> 'git pull' klappt immer.
 
 # ── Avahi / mDNS konfigurieren ──
 header "Avahi (mDNS) konfigurieren"
@@ -187,13 +201,35 @@ systemctl enable avahi-daemon
 systemctl start avahi-daemon || warn "Avahi konnte nicht gestartet werden."
 log "Avahi aktiviert."
 
-# ── Bluetooth aktivieren ──
-header "Bluetooth aktivieren"
-systemctl enable bluetooth 2>/dev/null || warn "Bluetooth-Dienst nicht gefunden."
-systemctl start bluetooth 2>/dev/null || warn "Bluetooth konnte nicht gestartet werden."
-# Benutzer zur bluetooth-Gruppe hinzufuegen
-usermod -aG bluetooth "${PI_USER}" 2>/dev/null || warn "Konnte Benutzer nicht zu bluetooth hinzufuegen."
-log "Bluetooth konfiguriert."
+# ── Samba-Freigabe (iPhone "Dateien"-App) ──
+header "Samba-Freigabe fuer den 'incoming'-Ordner einrichten"
+
+SMB_CONF="/etc/samba/smb.conf"
+if [[ -f "${SMB_CONF}" ]] && ! grep -q "\[Bilderrahmen\]" "${SMB_CONF}"; then
+  cat >> "${SMB_CONF}" <<EOF
+
+[Bilderrahmen]
+   comment = Digitaler Bilderrahmen - Bilder hierher kopieren
+   path = ${INCOMING_DIR}
+   browseable = yes
+   read only = no
+   guest ok = yes
+   create mask = 0664
+   directory mask = 0775
+   force user = ${PI_USER}
+EOF
+  log "Samba-Freigabe 'Bilderrahmen' hinzugefuegt (Ziel: ${INCOMING_DIR})."
+else
+  warn "Samba-Freigabe schon vorhanden oder smb.conf fehlt - uebersprungen."
+fi
+
+# 'incoming' fuer Gast-Schreibzugriff vorbereiten
+mkdir -p "${INCOMING_DIR}"
+chmod 0775 "${INCOMING_DIR}" 2>/dev/null || true
+
+systemctl enable smbd 2>/dev/null || warn "smbd-Dienst nicht gefunden."
+systemctl restart smbd 2>/dev/null || warn "smbd konnte nicht gestartet werden."
+log "Samba konfiguriert. iPhone: Dateien-App -> Verbinden -> smb://$(hostname).local"
 
 # ── Autostart fuer Desktop (LXDE/openbox) ──
 header "Desktop-Autostart konfigurieren"
@@ -228,8 +264,7 @@ for svc in "${SERVICES[@]}"; do
   dst="${SYSTEMD_DIR}/${svc}"
 
   if [[ -f "${src}" ]]; then
-    cp "${src}" "${dst}"
-    chmod 644 "${dst}"
+    install_unit "${src}" "${dst}"
     systemctl daemon-reload
     systemctl enable "${svc}"
     log "Service installiert und aktiviert: ${svc}"
@@ -242,16 +277,50 @@ done
 # (laeuft besser als Desktop-Autostart, da Display-Zugriff benoetigt wird)
 SLIDESHOW_SVC="bilderrahmen-slideshow.service"
 if [[ -f "${SERVICES_DIR}/${SLIDESHOW_SVC}" ]]; then
-  cp "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
-  chmod 644 "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
+  install_unit "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${SYSTEMD_DIR}/${SLIDESHOW_SVC}"
   systemctl daemon-reload
   # Als User-Service einrichten
   USER_SYSTEMD="${PI_HOME}/.config/systemd/user"
   mkdir -p "${USER_SYSTEMD}"
-  cp "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${USER_SYSTEMD}/${SLIDESHOW_SVC}"
+  install_unit "${SERVICES_DIR}/${SLIDESHOW_SVC}" "${USER_SYSTEMD}/${SLIDESHOW_SVC}"
   chown -R "${PI_USER}:${PI_USER}" "${PI_HOME}/.config/systemd"
   log "Slideshow-Service als User-Service eingerichtet."
   warn "Slideshow laeuft via Desktop-Autostart (DISPLAY erforderlich)."
+fi
+
+# ── WLAN stabilisieren ──
+header "WLAN stabilisieren"
+
+# 1) WLAN-Energiesparmodus aus: haeufige Ursache fuer Verbindungsabbrueche
+#    des WLAN-Chips im Raspberry Pi
+if [[ -d /etc/NetworkManager ]]; then
+  mkdir -p /etc/NetworkManager/conf.d
+  cat > /etc/NetworkManager/conf.d/bilderrahmen-wifi-powersave.conf <<'EOF'
+# Digitaler Bilderrahmen: WLAN-Energiesparmodus aus (verhindert Abbrueche)
+[connection]
+wifi.powersave = 2
+EOF
+  log "WLAN-Energiesparmodus dauerhaft deaktiviert (gilt ab Neustart)."
+else
+  warn "NetworkManager nicht gefunden - Energiespar-Einstellung uebersprungen."
+fi
+if command -v iw &>/dev/null; then
+  iw dev wlan0 set power_save off 2>/dev/null || true   # sofort wirksam
+fi
+
+# 2) WLAN-Waechter: verbindet automatisch neu, wenn das WLAN wegbricht
+#    (statt im Passwort-Dialog haengenzubleiben)
+WATCHDOG_SVC="bilderrahmen-wifi-watchdog.service"
+WATCHDOG_TIMER="bilderrahmen-wifi-watchdog.timer"
+if [[ -f "${SERVICES_DIR}/${WATCHDOG_SVC}" && -f "${SERVICES_DIR}/${WATCHDOG_TIMER}" ]]; then
+  install_unit "${SERVICES_DIR}/${WATCHDOG_SVC}" "${SYSTEMD_DIR}/${WATCHDOG_SVC}"
+  install_unit "${SERVICES_DIR}/${WATCHDOG_TIMER}" "${SYSTEMD_DIR}/${WATCHDOG_TIMER}"
+  systemctl daemon-reload
+  systemctl enable --now "${WATCHDOG_TIMER}" \
+    && log "WLAN-Waechter aktiv (prueft alle 2 Minuten, verbindet bei Bedarf neu)." \
+    || warn "WLAN-Waechter konnte nicht aktiviert werden."
+else
+  warn "WLAN-Waechter-Dateien nicht gefunden - uebersprungen."
 fi
 
 # ── Dienste starten ──
@@ -307,12 +376,17 @@ echo ""
 echo -e "  2. ${YELLOW}Web-Interface aufrufen:${NC}"
 echo -e "     http://$(hostname -I | awk '{print $1}' 2>/dev/null || echo '<IP-Adresse>'):8080"
 echo ""
-echo -e "  3. ${YELLOW}AirDrop:${NC}"
-echo -e "     Geraet heisst 'Bilderrahmen' (oder Hostname: $(hostname))"
+echo -e "  3. ${YELLOW}Bilder vom iPhone senden (2 Wege):${NC}"
+echo -e "     a) Web: http://$(hostname).local:8080  (Fotos-App -> Hochladen)"
+echo -e "        Tipp: Safari -> Teilen -> 'Zum Home-Bildschirm'"
+echo -e "     b) Dateien-App -> Verbinden mit Server -> smb://$(hostname).local"
+echo -e "        -> Ordner 'Bilderrahmen' -> Fotos hineinkopieren"
+echo -e "     Hinweis: Echtes AirDrop wird NICHT unterstuetzt (siehe README.md)."
 echo ""
 echo -e "  4. ${YELLOW}Dienste pruefen:${NC}"
 echo -e "     sudo systemctl status bilderrahmen-web"
 echo -e "     sudo systemctl status bilderrahmen-airdrop"
+echo -e "     journalctl -t bilderrahmen-wlan     (WLAN-Waechter)"
 echo ""
 echo -e "  5. ${YELLOW}Logs anzeigen:${NC}"
 echo -e "     tail -f ${INSTALL_DIR}/bilderrahmen.log"
